@@ -423,6 +423,20 @@ function guessCountry(ip) {
   return null;
 }
 
+// Lang sync
+function setLang(l) {
+  localStorage.setItem('ng_lang', l);
+  ['fr','en','es','de'].forEach(code => {
+    const btn = document.getElementById('lb-'+code);
+    if (!btn) return;
+    btn.style.background = code===l ? '#1a3a6e' : 'transparent';
+    btn.style.color = code===l ? '#4d9fff' : '#5a5a72';
+    btn.style.borderColor = code===l ? '#4d9fff' : 'rgba(255,255,255,0.1)';
+  });
+}
+const _initLang = localStorage.getItem('ng_lang') || 'fr';
+setLang(_initLang);
+
 // Start
 initMap();
 </script>
