@@ -1,0 +1,22 @@
+{
+  "rules": {
+    "block_port_scan": true,
+    "block_ssh_external": true,
+    "block_rdp_public": true,
+    "block_tor_exits": true,
+    "block_p2p": true,
+    "block_syn_flood": true,
+    "block_brute_force": true,
+    "alert_geo": true
+  },
+  "blocked_ips": [],
+  "geo_blocked_countries": [
+    "RU"
+  ],
+  "auto_block_enabled": true,
+  "auto_block_hits": 10,
+  "dpi_enabled": true,
+  "dpi_mask_sensitive": true,
+  "suricata_enabled": true,
+  "detection_params": {}
+}

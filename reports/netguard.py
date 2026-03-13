@@ -140,39 +140,6 @@ GEO_COUNTRY_NAMES = {
 }
 
 _geo_cache: dict = {}
-_geo_city_cache: dict = {}  # ip -> {city, country, country_name}
-
-def get_geo_info(ip: str) -> dict:
-    """Retourne {country, country_name, city} pour une IP — cache local d'abord, API ensuite"""
-    if ip in _geo_city_cache:
-        return _geo_city_cache[ip]
-    country = get_country(ip)
-    result = {
-        "country": country or "?",
-        "country_name": GEO_COUNTRY_NAMES.get(country, country or "Inconnu"),
-        "city": "",
-    }
-    # Essayer l'API ipapi.co en arrière-plan (non bloquant)
-    _geo_city_cache[ip] = result
-    return result
-
-def _fetch_city_async(ip: str):
-    """Récupère la ville et coordonnées en arrière-plan"""
-    try:
-        import urllib.request
-        url = f"https://ipapi.co/{ip}/json/"
-        req = urllib.request.Request(url, headers={"User-Agent": "NetGuardPro/1.8"})
-        with urllib.request.urlopen(req, timeout=3) as r:
-            data = json.loads(r.read().decode())
-        _geo_city_cache[ip] = {
-            "country":   data.get("country_code", ""),
-            "country_name": data.get("country_name", ""),
-            "city":      data.get("city", ""),
-            "latitude":  data.get("latitude"),
-            "longitude": data.get("longitude"),
-        }
-    except Exception:
-        pass
 
 def get_country(ip: str) -> Optional[str]:
     if is_private(ip):
@@ -738,8 +705,7 @@ def analyze_packet(pkt):
             decision = "block"
             reason   = f"Port {dst_port} toujours bloqué"
 
-        # ── Géoblocage
-        if GEO_BLOCKED_COUNTRIES and not is_private(src_ip):
+        elif GEO_BLOCKED_COUNTRIES and not is_private(src_ip):
             country = get_country(src_ip)
             if country and country in GEO_BLOCKED_COUNTRIES:
                 decision = "block"
@@ -825,13 +791,6 @@ def analyze_packet(pkt):
 
         if decision == "block" and not is_private(src_ip):
             auto_block_check(src_ip)
-            # Track geo hits for attacker stats
-            country = get_country(src_ip)
-            if country:
-                STATE.geo_hits[country] += 1
-                # Fetch city async if not cached yet
-                if src_ip not in _geo_city_cache:
-                    threading.Thread(target=_fetch_city_async, args=(src_ip,), daemon=True).start()
 
         if decision == "block":
             STATE.packets_blocked += 1
@@ -839,25 +798,12 @@ def analyze_packet(pkt):
             STATE.packets_allowed += 1
             STATE.active_conns[src_ip].add(dst_port)
 
-        # Get geo info for packet entry
-        geo = _geo_city_cache.get(src_ip, {})
-        country_code = geo.get("country") or get_country(src_ip) or ""
-        city = geo.get("city", "")
-        lat  = geo.get("latitude")
-        lon  = geo.get("longitude")
-        location = f"{city}, {GEO_COUNTRY_NAMES.get(country_code, country_code)}" if city else GEO_COUNTRY_NAMES.get(country_code, country_code)
-
         STATE.recent_packets.appendleft({
-            "t":        datetime.now().strftime("%H:%M:%S"),
-            "src":      src_ip, "dst": dst_ip,
-            "sport":    src_port, "dport": dst_port,
-            "proto":    proto, "size": f"{pkt_len}B",
-            "status":   decision, "reason": reason, "flags": flags,
-            "country":  country_code,
-            "city":     city,
-            "location": location,
-            "lat":      lat,
-            "lon":      lon,
+            "t":      datetime.now().strftime("%H:%M:%S"),
+            "src":    src_ip, "dst": dst_ip,
+            "sport":  src_port, "dport": dst_port,
+            "proto":  proto, "size": f"{pkt_len}B",
+            "status": decision, "reason": reason, "flags": flags,
         })
 
 import csv
@@ -943,10 +889,6 @@ def build_state_message() -> dict:
             "suricata_alerts":    list(STATE.suricata_alerts)[:20],
             "geo_blocked_countries": list(GEO_BLOCKED_COUNTRIES),
             "geo_country_names":  GEO_COUNTRY_NAMES,
-            "geo_hits": [
-                {"country": k, "name": GEO_COUNTRY_NAMES.get(k, k), "hits": v}
-                for k, v in sorted(STATE.geo_hits.items(), key=lambda x: -x[1])
-            ],
         }
 
 async def ws_handler(websocket):
@@ -1063,24 +1005,17 @@ async def handle_ws_command(ws, msg: dict):
         threading.Thread(target=_load, daemon=True).start()
         await ws.send(json.dumps({"type": "et_rules_loading", "ruleset": ruleset}))
 
+    # ── Géoblocage ────────────────────────────────────────────────────────
     elif cmd == "set_geo_countries":
         global GEO_BLOCKED_COUNTRIES
         countries = msg.get("countries", [])
         GEO_BLOCKED_COUNTRIES = set(countries)
         log.info(f"[GEO] Pays bloqués: {GEO_BLOCKED_COUNTRIES}")
         await ws.send(json.dumps({"type": "geo_updated", "countries": list(GEO_BLOCKED_COUNTRIES)}))
-        save_settings()
-
-async def broadcast_state():
     global CLIENTS
-    save_counter = 0
     while True:
         await asyncio.sleep(1)
         snapshot_traffic()
-        save_counter += 1
-        if save_counter >= 30:  # Sauvegarder toutes les 30 secondes
-            save_settings()
-            save_counter = 0
         if CLIENTS:
             msg = json.dumps(build_state_message())
             dead = set()
@@ -1136,11 +1071,6 @@ def _run_demo_mode():
             if is_bad:
                 STATE.packets_blocked += 1
                 STATE.ip_hit_counter[src] += 1
-                # Simulate geo hits
-                fake_countries = ['RU','CN','KP','IR','NG','BR']
-                import random as _r
-                fc = _r.choice(fake_countries)
-                STATE.geo_hits[fc] += 1
             else:
                 STATE.packets_allowed += 1
             STATE.bytes_in += random.randint(40, 1500)
@@ -1174,71 +1104,12 @@ async def main_async(interface: str):
     threading.Thread(target=start_capture, args=(interface,), daemon=True).start()
     log.info(f"[WS] Serveur WebSocket sur ws://localhost:{CFG.ws_port}")
     if HAS_WS:
-        stop = asyncio.Future()
-        async with websockets.serve(ws_handler, "localhost", CFG.ws_port):
+        async with websockets.serve(ws_handler, "localhost", CFG.ws_port, reuse_address=True):
             await broadcast_state()
     else:
         while True:
             await asyncio.sleep(1)
             snapshot_traffic()
-
-SETTINGS_FILE = "netguard_settings.json"
-
-def save_settings():
-    """Sauvegarde les settings dans un fichier JSON"""
-    try:
-        settings = {
-            "rules": {k: v["enabled"] for k, v in RULES.items()},
-            "blocked_ips": list(BLOCKED_IPS),
-            "geo_blocked_countries": list(GEO_BLOCKED_COUNTRIES),
-            "auto_block_enabled": CFG.auto_block_enabled,
-            "auto_block_hits": CFG.auto_block_hits,
-            "dpi_enabled": CFG.dpi_enabled,
-            "dpi_mask_sensitive": CFG.dpi_mask_sensitive,
-            "suricata_enabled": SURICATA_ENABLED,
-            "detection_params": {
-                k: DETECTION_PARAMS[k]["value"]
-                for k in DETECTION_PARAMS
-            } if 'DETECTION_PARAMS' in globals() else {},
-        }
-        with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
-            json.dump(settings, f, indent=2, ensure_ascii=False)
-        log.info(f"[SETTINGS] Sauvegardé → {SETTINGS_FILE}")
-    except Exception as e:
-        log.error(f"[SETTINGS] Erreur sauvegarde: {e}")
-
-def load_settings():
-    """Charge les settings depuis le fichier JSON"""
-    global GEO_BLOCKED_COUNTRIES, SURICATA_ENABLED
-    if not os.path.exists(SETTINGS_FILE):
-        log.info("[SETTINGS] Aucun fichier de settings trouvé — paramètres par défaut")
-        return
-    try:
-        with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
-            s = json.load(f)
-
-        # Règles
-        for k, enabled in s.get("rules", {}).items():
-            if k in RULES:
-                RULES[k]["enabled"] = enabled
-
-        # IPs bloquées
-        for ip in s.get("blocked_ips", []):
-            BLOCKED_IPS.add(ip)
-
-        # Géoblocage
-        GEO_BLOCKED_COUNTRIES = set(s.get("geo_blocked_countries", []))
-
-        # Config
-        CFG.auto_block_enabled  = s.get("auto_block_enabled", True)
-        CFG.auto_block_hits     = s.get("auto_block_hits", 10)
-        CFG.dpi_enabled         = s.get("dpi_enabled", True)
-        CFG.dpi_mask_sensitive  = s.get("dpi_mask_sensitive", True)
-        SURICATA_ENABLED        = s.get("suricata_enabled", True)
-
-        log.info(f"[SETTINGS] Chargé — {len(BLOCKED_IPS)} IPs bloquées, {len(GEO_BLOCKED_COUNTRIES)} pays géobloqués")
-    except Exception as e:
-        log.error(f"[SETTINGS] Erreur chargement: {e}")
 
 def main():
     parser = argparse.ArgumentParser(description="NetGuard Pro — Surveillance réseau")
@@ -1264,23 +1135,19 @@ def main():
     os.makedirs(CFG.record_dir, exist_ok=True)
     os.makedirs("reports", exist_ok=True)
 
-    # Charger les settings sauvegardés
-    load_settings()
-
     print("""
 ╔══════════════════════════════════════════════╗
-║      NetGuard Pro v1.7.0 — Démarrage        ║
+║      NetGuard Pro v1.6.0 — Démarrage        ║
 ╠══════════════════════════════════════════════╣
 ║  DPI + Record + Auto-block + Suricata IDS   ║
-║  Settings persistants activés               ║
+║  Dashboard: netguard_dashboard.html         ║
 ╚══════════════════════════════════════════════╝
 """)
     log.info("[MODE] Protection active" if CFG.can_block else "[MODE] Surveillance uniquement")
     try:
         asyncio.run(main_async(interface))
     except KeyboardInterrupt:
-        log.info("Arrêt de NetGuard Pro — sauvegarde des settings...")
-        save_settings()
+        log.info("Arrêt de NetGuard Pro.")
 
 if __name__ == "__main__":
     main()
