@@ -196,6 +196,10 @@ tr:hover td{background:var(--bg4)}
       <svg class="nav-icon" viewBox="0 0 16 16" fill="none"><path d="M3 2h7l3 3v9H3V2z" stroke="currentColor" stroke-width="1.3"/><path d="M10 2v3h3M6 7h4M6 10h4M6 13h2" stroke="currentColor" stroke-width="1.1"/></svg>
       Rapports
     </div>
+    <div class="nav-item" onclick="showTab('config')">
+      <svg class="nav-icon" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="2.5" stroke="currentColor" stroke-width="1.3"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.1 3.1l1.4 1.4M11.5 11.5l1.4 1.4M3.1 12.9l1.4-1.4M11.5 4.5l1.4-1.4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+      Configuration
+    </div>
     <div class="sidebar-footer">
       <div class="iface-badge">
         <div class="iface-name" id="sb-iface">—</div>
@@ -411,6 +415,64 @@ tr:hover td{background:var(--bg4)}
       </div>
     </div>
 
+
+    <!-- TAB: CONFIG -->
+    <div id="tab-config" class="dash" style="display:none">
+
+      <!-- Règles par catégorie -->
+      <div class="card">
+        <div class="card-header"><span class="card-title">Règles de protection — par catégorie</span></div>
+        <div id="rules-by-cat"></div>
+      </div>
+
+      <!-- Paramètres de détection -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Seuils de détection</span>
+          <span style="font-size:11px;color:var(--text3)">Glisse pour ajuster — appliqué en temps réel</span>
+        </div>
+        <div style="padding:14px;display:flex;flex-direction:column;gap:16px" id="params-list"></div>
+      </div>
+
+      <!-- Géoblocage -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Géoblocage par pays</span>
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="font-size:11px;color:var(--text3)" id="geo-count-label">0 pays bloqués</span>
+            <div class="toggle" id="geo-toggle" onclick="toggleRule('geo_block')"></div>
+          </div>
+        </div>
+        <div style="padding:14px">
+          <div style="font-size:11px;color:var(--text3);margin-bottom:12px">
+            Active le géoblocage dans les règles ci-dessus, puis sélectionne les pays à bloquer.
+            Les IPs de ces pays seront bloquées au niveau du pare-feu Windows.
+          </div>
+          <div id="geo-countries" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px"></div>
+          <div style="margin-top:12px;display:flex;gap:8px">
+            <button class="btn" onclick="applyGeoBlock()">Appliquer le géoblocage</button>
+            <button class="btn" onclick="clearGeoBlock()">Tout désélectionner</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Whitelist -->
+      <div class="card">
+        <div class="card-header"><span class="card-title">IPs toujours autorisées (whitelist)</span></div>
+        <div style="padding:14px">
+          <div style="font-size:11px;color:var(--text3);margin-bottom:10px">
+            Ces plages IP ne seront jamais bloquées (ton LAN est déjà inclus par défaut).
+          </div>
+          <div style="background:var(--bg4);border:1px solid var(--border2);border-radius:6px;padding:10px;font-family:'Geist Mono',monospace;font-size:11px;color:var(--green);line-height:1.8">
+            127.0.0.1 — Loopback<br>
+            192.168.0.0/16 — LAN privé<br>
+            10.0.0.0/8 — LAN privé<br>
+            172.16.0.0/12 — LAN privé
+          </div>
+        </div>
+      </div>
+
+    </div>
     <!-- TAB: RULES -->
     <div id="tab-rules" class="dash" style="display:none">
       <div class="card">
@@ -472,6 +534,14 @@ function handleMsg(msg) {
     if (lastState) { lastState.rules.find(r=>r.key===msg.rule).enabled = msg.enabled; renderRules(lastState.rules); }
   } else if (msg.type === 'ip_blocked' || msg.type === 'ip_unblocked') {
     sendCmd({cmd:'get_state'});
+  } else if (msg.type === 'geo_updated') {
+    if (lastState) { lastState.geo_blocked_countries = msg.countries; renderGeoPanel(msg.countries, lastState.geo_country_names); }
+    const label = document.getElementById('geo-count-label');
+    if (label) label.textContent = (msg.countries?.length||0) + ' pays bloqués';
+  } else if (msg.type === 'param_updated') {
+    if (lastState && lastState.detection_params && lastState.detection_params[msg.key]) {
+      lastState.detection_params[msg.key].value = msg.value;
+    }
   } else if (msg.type === 'report_ready') {
     document.getElementById('report-success').style.display = 'block';
     document.getElementById('report-error').style.display = 'none';
@@ -524,6 +594,7 @@ function render(s) {
 
   // Blocked IPs
   renderBlocked(s.blocked_ips);
+  renderConfig(s);
 }
 
 function setText(id, val) {
@@ -673,18 +744,120 @@ function setFilter(f, el) {
   if (lastState) renderPackets(lastState.recent_packets);
 }
 
-const TABS = ['dashboard','packets','threats','blocked','rules','reports'];
+const TABS = ['dashboard','packets','threats','blocked','rules','reports','config'];
 function showTab(id) {
   TABS.forEach(t => {
     document.getElementById('tab-'+t).style.display = t===id?'flex':'none';
   });
   document.querySelectorAll('.nav-item').forEach(el=>el.classList.remove('active'));
   event.currentTarget.classList.add('active');
-  const titles = {dashboard:'Tableau de bord',packets:'Paquets live',threats:'Menaces',blocked:'IPs bloquées',rules:'Règles pare-feu',reports:'Rapports'};
+  const titles = {dashboard:'Tableau de bord',packets:'Paquets live',threats:'Menaces',blocked:'IPs bloquées',rules:'Règles pare-feu',reports:'Rapports',config:'Configuration'};
   setText('page-title', titles[id]||id);
 }
 
-// Lancer la connexion
+// ── Config: paramètres ───────────────────────────────────────────────────
+let selectedGeoCountries = new Set();
+
+function renderConfig(state) {
+  if (!state) return;
+  renderRulesByCat(state.rules);
+  renderParams(state.detection_params);
+  renderGeoPanel(state.geo_blocked_countries, state.geo_country_names);
+}
+
+function renderRulesByCat(rules) {
+  const el = document.getElementById('rules-by-cat');
+  if (!el || !rules) return;
+  const cats = {};
+  rules.forEach(r => {
+    if (!cats[r.cat]) cats[r.cat] = [];
+    cats[r.cat].push(r);
+  });
+  el.innerHTML = Object.entries(cats).map(([cat, list]) => `
+    <div style="border-bottom:1px solid var(--border);padding:8px 14px 0">
+      <div style="font-size:10px;font-weight:600;color:var(--text3);letter-spacing:.06em;text-transform:uppercase;margin-bottom:4px">${cat}</div>
+      ${list.map(r => `
+        <div class="rule-item" style="padding:6px 0">
+          <div class="toggle ${r.enabled?'on':''}" onclick='toggleRule("${r.key}")'></div>
+          <span class="rule-name">${r.label}</span>
+          <span class="rule-hits">${r.hits}</span>
+        </div>`).join('')}
+    </div>`).join('');
+}
+
+function renderParams(params) {
+  const el = document.getElementById('params-list');
+  if (!el || !params) return;
+  el.innerHTML = Object.entries(params).map(([key, p]) => `
+    <div>
+      <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+        <span style="font-size:12px;color:var(--text)">${p.label}</span>
+        <span style="font-size:12px;font-family:'Geist Mono',monospace;color:var(--blue)" id="pval-${key}">${p.value} ${p.unit}</span>
+      </div>
+      <input type="range" min="${p.min}" max="${p.max}" value="${p.value}" step="1"
+        style="width:100%"
+        oninput="updateParamDisplay('${key}', this.value, '${p.unit}')"
+        onchange="sendParamUpdate('${key}', this.value)">
+      <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text3);margin-top:2px">
+        <span>${p.min}</span><span>${p.max}</span>
+      </div>
+    </div>`).join('');
+}
+
+function updateParamDisplay(key, val, unit) {
+  const el = document.getElementById('pval-' + key);
+  if (el) el.textContent = val + ' ' + unit;
+}
+
+function sendParamUpdate(key, val) {
+  sendCmd({cmd: 'update_param', key, value: parseInt(val)});
+}
+
+function renderGeoPanel(blocked, names) {
+  if (!names) return;
+  selectedGeoCountries = new Set(blocked || []);
+  const toggle = document.getElementById('geo-toggle');
+  const label = document.getElementById('geo-count-label');
+  if (label) label.textContent = selectedGeoCountries.size + ' pays bloqués';
+
+  const el = document.getElementById('geo-countries');
+  if (!el) return;
+  el.innerHTML = Object.entries(names).map(([code, name]) => {
+    const sel = selectedGeoCountries.has(code);
+    const flags = {RU:'🇷🇺',CN:'🇨🇳',KP:'🇰🇵',IR:'🇮🇷',KR:'🇰🇷',BR:'🇧🇷',NG:'🇳🇬',IN:'🇮🇳',US:'🇺🇸',DE:'🇩🇪',FR:'🇫🇷',NL:'🇳🇱'};
+    return `<div id="geo-${code}" onclick="toggleGeoCountry('${code}')"
+      style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:6px;cursor:pointer;
+             background:${sel?'var(--reddim)':'var(--bg4)'};border:1px solid ${sel?'var(--red)+44':'var(--border2)'};
+             transition:.15s">
+      <span style="font-size:16px">${flags[code]||'🌍'}</span>
+      <span style="font-size:12px;color:${sel?'var(--red)':'var(--text)'};">${name}</span>
+      ${sel?'<span style="margin-left:auto;font-size:9px;color:var(--red);font-weight:600">BLOQUÉ</span>':''}
+    </div>`;
+  }).join('');
+}
+
+function toggleGeoCountry(code) {
+  if (selectedGeoCountries.has(code)) selectedGeoCountries.delete(code);
+  else selectedGeoCountries.add(code);
+  if (lastState) renderGeoPanel(Array.from(selectedGeoCountries), lastState.geo_country_names);
+  const label = document.getElementById('geo-count-label');
+  if (label) label.textContent = selectedGeoCountries.size + ' pays bloqués';
+}
+
+function applyGeoBlock() {
+  sendCmd({cmd: 'set_geo_countries', countries: Array.from(selectedGeoCountries)});
+  if (!lastState?.rules?.find(r=>r.key==='geo_block')?.enabled) {
+    sendCmd({cmd: 'toggle_rule', rule: 'geo_block'});
+  }
+}
+
+function clearGeoBlock() {
+  selectedGeoCountries.clear();
+  sendCmd({cmd: 'set_geo_countries', countries: []});
+  if (lastState) renderGeoPanel([], lastState.geo_country_names);
+}
+
+// ── Lancer la connexion
 connect();
 
 // Redessiner le graphe au resize

@@ -69,29 +69,154 @@ CFG = Config()
 
 # ─── Règles utilisateur ────────────────────────────────────────────────────
 RULES = {
-    "block_port_scan":     {"enabled": True,  "label": "Bloquer scan de ports",   "hits": 0},
-    "block_ssh_external":  {"enabled": True,  "label": "Bloquer SSH externe",     "hits": 0},
-    "block_rdp_public":    {"enabled": True,  "label": "Bloquer RDP public",      "hits": 0},
-    "block_tor_exits":     {"enabled": True,  "label": "Bloquer Tor exit nodes",  "hits": 0},
-    "block_p2p":           {"enabled": True,  "label": "Bloquer P2P/Torrent",     "hits": 0},
-    "block_syn_flood":     {"enabled": True,  "label": "Bloquer SYN Flood",       "hits": 0},
-    "block_brute_force":   {"enabled": True,  "label": "Bloquer Brute Force",     "hits": 0},
-    "alert_geo":           {"enabled": True,  "label": "Alerter trafic suspect",  "hits": 0},
+    # Détection dynamique
+    "block_port_scan":      {"enabled": True,  "label": "Bloquer scan de ports",          "hits": 0, "cat": "Détection"},
+    "block_brute_force":    {"enabled": True,  "label": "Bloquer Brute Force SSH/RDP",    "hits": 0, "cat": "Détection"},
+    "block_syn_flood":      {"enabled": True,  "label": "Bloquer SYN Flood",              "hits": 0, "cat": "Détection"},
+    "block_icmp_flood":     {"enabled": True,  "label": "Bloquer ICMP Flood",             "hits": 0, "cat": "Détection"},
+    "detect_http_scan":     {"enabled": True,  "label": "Détecter scanners HTTP/vuln",    "hits": 0, "cat": "Détection"},
+    "detect_arp_spoof":     {"enabled": True,  "label": "Détecter ARP Spoofing (LAN)",    "hits": 0, "cat": "Détection"},
+    "detect_dns_tunnel":    {"enabled": True,  "label": "Détecter DNS Tunneling",         "hits": 0, "cat": "Détection"},
+    "detect_malicious_dns": {"enabled": True,  "label": "Détecter domaines malveillants", "hits": 0, "cat": "Détection"},
+    # Ports
+    "block_ssh_external":   {"enabled": True,  "label": "Bloquer SSH externe (port 22)",  "hits": 0, "cat": "Ports"},
+    "block_rdp_public":     {"enabled": True,  "label": "Bloquer RDP public (port 3389)", "hits": 0, "cat": "Ports"},
+    "block_p2p":            {"enabled": True,  "label": "Bloquer P2P/BitTorrent",         "hits": 0, "cat": "Ports"},
+    "block_smb":            {"enabled": True,  "label": "Bloquer SMB externe (445/139)",  "hits": 0, "cat": "Ports"},
+    "block_telnet":         {"enabled": True,  "label": "Bloquer Telnet (port 23)",       "hits": 0, "cat": "Ports"},
+    "block_ftp":            {"enabled": False, "label": "Bloquer FTP non-sécurisé (21)",  "hits": 0, "cat": "Ports"},
+    # Listes noires
+    "block_tor":            {"enabled": True,  "label": "Bloquer noeuds Tor",             "hits": 0, "cat": "Blacklist"},
+    "block_vpn_known":      {"enabled": True,  "label": "Bloquer VPN connus",             "hits": 0, "cat": "Blacklist"},
+    "block_proxy_public":   {"enabled": True,  "label": "Bloquer proxies publics",        "hits": 0, "cat": "Blacklist"},
+    # Géoblocage
+    "geo_block":            {"enabled": False, "label": "Géoblocage par pays",            "hits": 0, "cat": "Géo"},
 }
 
+# ─── Paramètres de détection (modifiables depuis le dashboard) ─────────────
+DETECTION_PARAMS = {
+    "port_scan_threshold":   {"value": 15,  "label": "Scan de ports — nb de ports",     "min": 5,   "max": 100,  "unit": "ports"},
+    "port_scan_window":      {"value": 10,  "label": "Scan de ports — fenêtre",          "min": 5,   "max": 60,   "unit": "sec"},
+    "brute_force_threshold": {"value": 8,   "label": "Brute Force — nb tentatives",      "min": 3,   "max": 50,   "unit": "tentatives"},
+    "brute_force_window":    {"value": 30,  "label": "Brute Force — fenêtre",            "min": 10,  "max": 120,  "unit": "sec"},
+    "syn_flood_threshold":   {"value": 200, "label": "SYN Flood — paquets/fenêtre",      "min": 50,  "max": 1000, "unit": "paquets"},
+    "syn_flood_window":      {"value": 5,   "label": "SYN Flood — fenêtre",              "min": 1,   "max": 30,   "unit": "sec"},
+    "icmp_flood_threshold":  {"value": 100, "label": "ICMP Flood — paquets/fenêtre",     "min": 20,  "max": 500,  "unit": "paquets"},
+    "icmp_flood_window":     {"value": 5,   "label": "ICMP Flood — fenêtre",             "min": 1,   "max": 30,   "unit": "sec"},
+    "dns_tunnel_threshold":  {"value": 50,  "label": "DNS Tunneling — requêtes/fenêtre", "min": 10,  "max": 200,  "unit": "requêtes"},
+    "http_scan_threshold":   {"value": 30,  "label": "Scanner HTTP — requêtes/fenêtre",  "min": 10,  "max": 200,  "unit": "requêtes"},
+}
+
+# ─── Géoblocage ────────────────────────────────────────────────────────────
+GEO_BLOCKED_COUNTRIES: set = set()
+
+GEO_IP_RANGES = {
+    "RU": ["5.8.0.0/16","5.44.0.0/22","37.9.0.0/16","46.8.0.0/16","77.37.128.0/17",
+           "80.73.0.0/18","81.162.0.0/16","82.138.0.0/17","83.149.0.0/17","84.201.0.0/16",
+           "85.90.0.0/15","87.226.128.0/17","89.111.0.0/18","91.108.4.0/22","91.227.64.0/18",
+           "92.53.0.0/18","93.153.128.0/17","94.25.0.0/16","95.165.0.0/16","109.86.0.0/15",
+           "176.14.0.0/16","176.57.0.0/17","178.140.0.0/14","185.71.76.0/22",
+           "193.232.0.0/14","194.8.0.0/15","195.2.0.0/16","212.42.0.0/17","213.24.0.0/14"],
+    "CN": ["1.0.1.0/24","1.0.2.0/23","27.0.0.0/13","36.0.0.0/11","39.0.0.0/8",
+           "42.0.0.0/8","49.0.0.0/8","58.0.0.0/7","60.0.0.0/8","61.0.0.0/8",
+           "101.0.0.0/8","106.0.0.0/8","110.0.0.0/7","112.0.0.0/7","114.0.0.0/8",
+           "115.0.0.0/8","116.0.0.0/6","120.0.0.0/6","124.0.0.0/7","163.0.0.0/8",
+           "171.0.0.0/8","175.0.0.0/8","180.0.0.0/6","182.0.0.0/7","183.0.0.0/8",
+           "202.0.0.0/7","210.0.0.0/7","218.0.0.0/7","220.0.0.0/6","223.0.0.0/8"],
+    "KP": ["175.45.176.0/22","210.52.109.0/24"],
+    "IR": ["2.144.0.0/13","5.22.0.0/15","5.52.0.0/14","31.2.128.0/17","37.98.128.0/17",
+           "37.156.0.0/16","46.100.0.0/14","62.60.0.0/15","78.39.192.0/18","80.71.0.0/17",
+           "82.99.192.0/18","85.133.0.0/16","87.107.0.0/16","89.32.0.0/14","91.98.0.0/15",
+           "94.182.0.0/15","95.38.0.0/15","109.120.128.0/17","176.65.192.0/18",
+           "188.136.0.0/13","194.225.0.0/16","195.146.32.0/19"],
+    "KR": ["1.16.0.0/12","1.176.0.0/12","14.0.0.0/11","27.96.0.0/14","49.142.0.0/17",
+           "58.120.0.0/13","59.0.0.0/11","61.32.0.0/13","61.40.0.0/13","112.144.0.0/12",
+           "119.64.0.0/11","121.128.0.0/11","122.32.0.0/11","125.128.0.0/11",
+           "175.192.0.0/11","203.226.0.0/15","210.94.0.0/15","211.36.0.0/14"],
+    "BR": ["177.0.0.0/8","179.0.0.0/8","186.192.0.0/11","189.0.0.0/8",
+           "200.128.0.0/9","201.0.0.0/8"],
+    "NG": ["41.58.0.0/16","41.184.0.0/14","105.112.0.0/12","154.120.0.0/13",
+           "197.210.0.0/15","197.242.0.0/15"],
+    "IN": ["1.6.0.0/15","14.96.0.0/11","27.4.0.0/14","43.224.0.0/11","45.112.0.0/12",
+           "49.32.0.0/12","59.88.0.0/13","59.96.0.0/12","103.0.0.0/8","106.64.0.0/10",
+           "115.240.0.0/13","117.192.0.0/11","119.224.0.0/11","122.160.0.0/11",
+           "123.136.0.0/13","124.120.0.0/13","180.64.0.0/12","182.64.0.0/10",
+           "202.56.0.0/16","210.212.0.0/14"],
+    "US": ["3.0.0.0/8","4.0.0.0/8","8.0.0.0/8","12.0.0.0/8","13.0.0.0/8",
+           "15.0.0.0/8","16.0.0.0/8","17.0.0.0/8","18.0.0.0/8","20.0.0.0/8",
+           "23.0.0.0/8","24.0.0.0/8","34.0.0.0/8","35.0.0.0/8","40.0.0.0/8",
+           "44.0.0.0/8","45.0.0.0/8","47.0.0.0/8","50.0.0.0/8","52.0.0.0/8",
+           "54.0.0.0/8","63.0.0.0/8","64.0.0.0/8","65.0.0.0/8","66.0.0.0/8",
+           "67.0.0.0/8","68.0.0.0/8","98.0.0.0/8","104.0.0.0/8","107.0.0.0/8"],
+    "DE": ["5.1.0.0/17","5.56.0.0/14","5.180.0.0/14","5.252.0.0/14","31.10.0.0/14",
+           "46.4.0.0/14","46.231.0.0/16","78.42.0.0/15","78.94.0.0/15","80.64.0.0/13",
+           "80.154.0.0/15","81.169.0.0/16","82.113.0.0/16","84.44.0.0/14","85.14.0.0/15",
+           "85.119.0.0/17","87.77.0.0/16","89.0.0.0/16","91.65.0.0/16","94.130.0.0/15",
+           "213.160.0.0/14"],
+    "FR": ["2.0.0.0/11","2.14.0.0/15","5.39.0.0/17","37.187.0.0/16","46.105.0.0/16",
+           "51.77.0.0/16","51.178.0.0/15","77.136.0.0/13","78.192.0.0/11","82.64.0.0/11",
+           "83.200.0.0/13","86.192.0.0/11","88.120.0.0/13","90.0.0.0/11","90.48.0.0/13",
+           "109.0.0.0/12","176.139.0.0/16","178.116.0.0/14","185.15.0.0/16"],
+    "NL": ["2.56.0.0/14","5.57.64.0/18","31.3.0.0/16","31.6.0.0/16","37.19.0.0/16",
+           "45.14.0.0/16","46.19.0.0/16","77.243.0.0/16","80.65.0.0/17","80.100.0.0/14",
+           "82.94.0.0/15","84.22.0.0/15","85.17.0.0/16","87.213.0.0/16","89.188.0.0/15",
+           "91.194.0.0/15","94.75.0.0/16","95.211.0.0/16","185.220.0.0/16"],
+}
+
+GEO_COUNTRY_NAMES = {
+    "RU": "Russie", "CN": "Chine", "KP": "Corée du Nord", "IR": "Iran",
+    "KR": "Corée du Sud", "BR": "Brésil", "NG": "Nigeria", "IN": "Inde",
+    "US": "États-Unis", "DE": "Allemagne", "FR": "France", "NL": "Pays-Bas",
+}
+
+_geo_cache: dict = {}
+
+def get_country(ip: str) -> Optional[str]:
+    if is_private(ip):
+        return None
+    if ip in _geo_cache:
+        return _geo_cache[ip]
+    try:
+        addr = ipaddress.ip_address(ip)
+        for country, ranges in GEO_IP_RANGES.items():
+            for net_str in ranges:
+                try:
+                    if addr in ipaddress.ip_network(net_str, strict=False):
+                        _geo_cache[ip] = country
+                        return country
+                except ValueError:
+                    pass
+    except ValueError:
+        pass
+    _geo_cache[ip] = None
+    return None
+
 # ─── Listes noires ─────────────────────────────────────────────────────────
-TOR_EXIT_NODES: set = set()   # chargées depuis fichier ou API
-BLOCKED_IPS:    set = set()   # IPs bloquées dynamiquement
-BLOCKED_NETS:   list = []     # Réseaux bloqués
+BLOCKED_IPS:  set = set()
+BLOCKED_NETS: list = []
 
-# Plages IP connues comme malveillantes (exemples)
-KNOWN_BAD_RANGES = [
-    "185.220.0.0/16",   # Tor relays connus
-    "162.247.74.0/24",  # Tor exit nodes
-]
+KNOWN_BAD_RANGES = {
+    "tor":   ["185.220.0.0/16","185.220.100.0/22","162.247.74.0/24",
+              "204.8.96.0/22","199.87.154.0/24","185.100.86.0/23"],
+    "vpn":   ["104.200.16.0/20","23.19.0.0/16","149.154.0.0/16",
+              "91.108.4.0/22","149.154.160.0/22","185.76.151.0/24"],
+    "proxy": ["185.56.80.0/22","91.219.236.0/22","194.165.16.0/23",
+              "185.142.236.0/22","46.166.0.0/17"],
+}
 
-# Ports P2P/BitTorrent
-P2P_PORTS = set(range(6881, 6890)) | {51413, 1337, 2710}
+MALICIOUS_DOMAINS = {
+    ".tk", ".ml", ".ga", ".cf", ".gq",
+    "duckdns.org", "no-ip.com", "ddns.net",
+    "ngrok.io", "pagekite.me", ".onion",
+}
+
+P2P_PORTS = set(range(6881, 6890)) | {51413, 1337, 2710, 6969}
+
+HTTP_SCANNER_AGENTS = {
+    "masscan", "zgrab", "nmap", "nikto", "sqlmap", "dirbuster",
+    "gobuster", "wfuzz", "burpsuite", "acunetix", "nessus",
+    "openvas", "w3af", "havij", "sqlninja", "hydra",
+}
 
 # ─── État global ──────────────────────────────────────────────────────────
 class NetState:
@@ -109,10 +234,13 @@ class NetState:
         self.proto_stats      = defaultdict(int)
         self.traffic_history  = deque(maxlen=60)   # 1 point/sec
         # Fenêtres glissantes pour détection
-        self._port_scan_tracker    = defaultdict(list)  # ip -> [(ts, port)]
-        self._brute_force_tracker  = defaultdict(list)  # ip -> [timestamps]
-        self._syn_flood_tracker    = defaultdict(list)  # ip -> [timestamps]
-        self._dns_tracker          = defaultdict(list)  # ip -> [timestamps]
+        self._port_scan_tracker    = defaultdict(list)
+        self._brute_force_tracker  = defaultdict(list)
+        self._syn_flood_tracker    = defaultdict(list)
+        self._dns_tracker          = defaultdict(list)
+        self._icmp_tracker         = defaultdict(list)
+        self._http_tracker         = defaultdict(list)
+        self._arp_table            = {}               # ip -> mac (ARP spoof detection)
 
 STATE = NetState()
 
@@ -151,12 +279,17 @@ def is_whitelisted(ip: str) -> bool:
         pass
     return False
 
-def is_in_bad_range(ip: str) -> bool:
+def is_in_bad_range(ip: str, category: str = None) -> bool:
     try:
         a = ipaddress.ip_address(ip)
-        for net_str in KNOWN_BAD_RANGES:
-            if a in ipaddress.ip_network(net_str, strict=False):
-                return True
+        cats = [category] if category else list(KNOWN_BAD_RANGES.keys())
+        for cat in cats:
+            for net_str in KNOWN_BAD_RANGES.get(cat, []):
+                try:
+                    if a in ipaddress.ip_network(net_str, strict=False):
+                        return True
+                except ValueError:
+                    pass
     except ValueError:
         pass
     return False
@@ -293,6 +426,72 @@ def detect_dns_tunneling(src_ip: str) -> Optional[str]:
         return f"DNS Tunneling probable: {count} requêtes/5s"
     return None
 
+def detect_icmp_flood(src_ip: str) -> Optional[str]:
+    if not RULES["block_icmp_flood"]["enabled"]:
+        return None
+    tracker = STATE._icmp_tracker[src_ip]
+    now = time.time()
+    tracker.append(now)
+    window = DETECTION_PARAMS["icmp_flood_window"]["value"]
+    threshold = DETECTION_PARAMS["icmp_flood_threshold"]["value"]
+    STATE._icmp_tracker[src_ip] = _clean_window(tracker, window)
+    count = len(STATE._icmp_tracker[src_ip])
+    if count >= threshold:
+        return f"ICMP Flood: {count} paquets/{window}s"
+    return None
+
+def detect_http_scanner(src_ip: str, raw_payload: str) -> Optional[str]:
+    if not RULES["detect_http_scan"]["enabled"]:
+        return None
+    payload_lower = raw_payload.lower()
+    for agent in HTTP_SCANNER_AGENTS:
+        if agent in payload_lower:
+            return f"Scanner HTTP détecté: {agent}"
+    # Detect rapid HTTP requests
+    tracker = STATE._http_tracker[src_ip]
+    now = time.time()
+    tracker.append(now)
+    window = 10
+    threshold = DETECTION_PARAMS["http_scan_threshold"]["value"]
+    STATE._http_tracker[src_ip] = _clean_window(tracker, window)
+    count = len(STATE._http_tracker[src_ip])
+    if count >= threshold:
+        return f"Scan HTTP rapide: {count} requêtes/{window}s"
+    return None
+
+def detect_arp_spoof(pkt) -> Optional[str]:
+    if not RULES["detect_arp_spoof"]["enabled"]:
+        return None
+    if not HAS_SCAPY or not pkt.haslayer(ARP):
+        return None
+    arp = pkt[ARP]
+    if arp.op != 2:  # ARP reply only
+        return None
+    src_ip  = arp.psrc
+    src_mac = arp.hwsrc
+    if src_ip in STATE._arp_table:
+        known_mac = STATE._arp_table[src_ip]
+        if known_mac != src_mac:
+            return f"ARP Spoofing: {src_ip} change MAC {known_mac} -> {src_mac}"
+    STATE._arp_table[src_ip] = src_mac
+    return None
+
+def detect_malicious_domain(pkt) -> Optional[str]:
+    if not RULES["detect_malicious_dns"]["enabled"]:
+        return None
+    if not HAS_SCAPY or not pkt.haslayer(DNS):
+        return None
+    try:
+        dns = pkt[DNS]
+        if dns.qr == 0 and dns.qd:  # DNS query
+            qname = dns.qd.qname.decode("utf-8", errors="ignore").rstrip(".")
+            for bad in MALICIOUS_DOMAINS:
+                if qname.endswith(bad):
+                    return f"Domaine malveillant: {qname}"
+    except Exception:
+        pass
+    return None
+
 # ─── Analyse d'un paquet ──────────────────────────────────────────────────
 def analyze_packet(pkt):
     if not HAS_SCAPY:
@@ -320,87 +519,157 @@ def analyze_packet(pkt):
 
     decision  = "allow"
     reason    = ""
-    threat_added = None
+    country   = None
 
     with STATE.lock:
         STATE.packets_total += 1
         STATE.proto_stats[proto] += 1
 
-        # Direction (approximation)
         if is_private(dst_ip):
             STATE.bytes_in += pkt_len
         else:
             STATE.bytes_out += pkt_len
 
-        # ── Règles de blocage ─────────────────────────────────────────────
+        # ── ARP spoof (LAN, avant IP check) ──────────────────────────────
+        if HAS_SCAPY and pkt.haslayer(ARP):
+            arp_reason = detect_arp_spoof(pkt)
+            if arp_reason:
+                add_threat(pkt[ARP].psrc, "ARP Spoofing", arp_reason, "high", "detect_arp_spoof")
 
-        # 1. IP déjà bloquée
+        if not pkt.haslayer(IP) if HAS_SCAPY else False:
+            return
+
+        # ── 1. IP déjà bloquée ───────────────────────────────────────────
         if src_ip in BLOCKED_IPS:
             decision = "block"
             reason   = "IP blacklistée"
 
-        # 2. Plages malveillantes connues
-        elif is_in_bad_range(src_ip):
+        # ── 2. Géoblocage ────────────────────────────────────────────────
+        elif RULES["geo_block"]["enabled"] and not is_private(src_ip):
+            country = get_country(src_ip)
+            if country and country in GEO_BLOCKED_COUNTRIES:
+                decision = "block"
+                reason   = f"Géoblocage: {GEO_COUNTRY_NAMES.get(country, country)}"
+                RULES["geo_block"]["hits"] += 1
+                block_ip_os(src_ip, reason)
+
+        # ── 3. Tor ───────────────────────────────────────────────────────
+        elif RULES["block_tor"]["enabled"] and is_in_bad_range(src_ip, "tor"):
             decision = "block"
-            reason   = "IP dans plage malveillante connue"
+            reason   = "Noeud Tor détecté"
+            RULES["block_tor"]["hits"] += 1
             block_ip_os(src_ip, reason)
 
-        # 3. Ports toujours bloqués (depuis IP externe)
-        elif not is_private(src_ip) and dst_port in CFG.always_block_ports:
+        # ── 4. VPN connu ─────────────────────────────────────────────────
+        elif RULES["block_vpn_known"]["enabled"] and is_in_bad_range(src_ip, "vpn"):
             decision = "block"
-            reason   = f"Port {dst_port} toujours bloqué"
-            RULES["block_rdp_public"]["hits"] += (1 if dst_port == 3389 else 0)
+            reason   = "VPN connu"
+            RULES["block_vpn_known"]["hits"] += 1
+            block_ip_os(src_ip, reason)
 
-        # 4. SSH/RDP depuis IP externe
-        elif (not is_private(src_ip) and
-              dst_port in CFG.sensitive_ports and
-              RULES["block_ssh_external"]["enabled"]):
+        # ── 5. Proxy public ──────────────────────────────────────────────
+        elif RULES["block_proxy_public"]["enabled"] and is_in_bad_range(src_ip, "proxy"):
             decision = "block"
-            reason   = f"Accès port sensible ({dst_port}) depuis IP externe"
-            RULES["block_ssh_external"]["hits"] += 1
+            reason   = "Proxy public"
+            RULES["block_proxy_public"]["hits"] += 1
+            block_ip_os(src_ip, reason)
 
-        # 5. P2P / BitTorrent
-        elif (dst_port in P2P_PORTS or src_port in P2P_PORTS) and RULES["block_p2p"]["enabled"]:
-            decision = "block"
-            reason   = "Trafic P2P/BitTorrent"
-            RULES["block_p2p"]["hits"] += 1
+        # ── 6. Ports sensibles depuis externe ────────────────────────────
+        elif not is_private(src_ip):
+            if dst_port == 22 and RULES["block_ssh_external"]["enabled"]:
+                decision = "block"
+                reason   = "SSH depuis IP externe"
+                RULES["block_ssh_external"]["hits"] += 1
+            elif dst_port == 3389 and RULES["block_rdp_public"]["enabled"]:
+                decision = "block"
+                reason   = "RDP depuis IP externe"
+                RULES["block_rdp_public"]["hits"] += 1
+            elif dst_port in {445, 139} and RULES["block_smb"]["enabled"]:
+                decision = "block"
+                reason   = "SMB depuis IP externe"
+                RULES["block_smb"]["hits"] += 1
+            elif dst_port == 23 and RULES["block_telnet"]["enabled"]:
+                decision = "block"
+                reason   = "Telnet depuis IP externe"
+                RULES["block_telnet"]["hits"] += 1
+            elif dst_port == 21 and RULES["block_ftp"]["enabled"]:
+                decision = "block"
+                reason   = "FTP non-sécurisé"
+                RULES["block_ftp"]["hits"] += 1
 
-        # ── Détections dynamiques ─────────────────────────────────────────
-        else:
-            if not is_private(src_ip):
-                # Port scan
-                scan_reason = detect_port_scan(src_ip, dst_port)
-                if scan_reason:
+        # ── 7. P2P ───────────────────────────────────────────────────────
+        if decision == "allow" and RULES["block_p2p"]["enabled"]:
+            if dst_port in P2P_PORTS or src_port in P2P_PORTS:
+                decision = "block"
+                reason   = "Trafic P2P/BitTorrent"
+                RULES["block_p2p"]["hits"] += 1
+
+        # ── 8. Détections dynamiques (IPs externes seulement) ────────────
+        if decision == "allow" and not is_private(src_ip):
+            # ICMP flood
+            if HAS_SCAPY and pkt.haslayer(ICMP):
+                icmp_r = detect_icmp_flood(src_ip)
+                if icmp_r:
                     decision = "block"
-                    reason   = scan_reason
-                    threat_added = add_threat(src_ip, "Scan de ports", scan_reason, "high", "block_port_scan")
-                    block_ip_os(src_ip, scan_reason)
+                    reason   = icmp_r
+                    add_threat(src_ip, "ICMP Flood", icmp_r, "high", "block_icmp_flood")
+                    block_ip_os(src_ip, icmp_r)
 
-                # Brute force
-                if decision == "allow":
-                    bf_reason = detect_brute_force(src_ip, dst_port, is_syn)
-                    if bf_reason:
-                        decision = "block"
-                        reason   = bf_reason
-                        threat_added = add_threat(src_ip, "Brute Force", bf_reason, "high", "block_brute_force")
-                        block_ip_os(src_ip, bf_reason)
+            # Port scan
+            if decision == "allow" and dst_port:
+                scan_r = detect_port_scan(src_ip, dst_port)
+                if scan_r:
+                    decision = "block"
+                    reason   = scan_r
+                    add_threat(src_ip, "Scan de ports", scan_r, "high", "block_port_scan")
+                    block_ip_os(src_ip, scan_r)
 
-                # SYN flood
-                if decision == "allow":
-                    syn_reason = detect_syn_flood(src_ip, is_syn)
-                    if syn_reason:
-                        decision = "block"
-                        reason   = syn_reason
-                        threat_added = add_threat(src_ip, "SYN Flood", syn_reason, "high", "block_syn_flood")
-                        block_ip_os(src_ip, syn_reason)
+            # Brute force
+            if decision == "allow":
+                bf_r = detect_brute_force(src_ip, dst_port, is_syn)
+                if bf_r:
+                    decision = "block"
+                    reason   = bf_r
+                    add_threat(src_ip, "Brute Force", bf_r, "high", "block_brute_force")
+                    block_ip_os(src_ip, bf_r)
 
-            # DNS tunneling (LAN ou WAN)
-            if decision == "allow" and pkt.haslayer(DNS):
-                dns_reason = detect_dns_tunneling(src_ip)
-                if dns_reason:
+            # SYN flood
+            if decision == "allow":
+                syn_r = detect_syn_flood(src_ip, is_syn)
+                if syn_r:
+                    decision = "block"
+                    reason   = syn_r
+                    add_threat(src_ip, "SYN Flood", syn_r, "high", "block_syn_flood")
+                    block_ip_os(src_ip, syn_r)
+
+            # HTTP scanner
+            if decision == "allow" and HAS_SCAPY and pkt.haslayer(Raw) and dst_port in {80,8080,8000,443}:
+                try:
+                    payload = pkt[Raw].load.decode("utf-8","ignore")
+                    http_r = detect_http_scanner(src_ip, payload)
+                    if http_r:
+                        decision = "warn"
+                        reason   = http_r
+                        add_threat(src_ip, "Scanner HTTP", http_r, "med", "detect_http_scan")
+                except Exception:
+                    pass
+
+        # ── 9. DNS checks (tous) ─────────────────────────────────────────
+        if decision == "allow" and HAS_SCAPY and pkt.haslayer(DNS):
+            # Domaine malveillant
+            mal_r = detect_malicious_domain(pkt)
+            if mal_r:
+                decision = "warn"
+                reason   = mal_r
+                add_threat(src_ip, "Domaine malveillant", mal_r, "med", "detect_malicious_dns")
+
+            # DNS tunneling
+            if decision == "allow":
+                dns_r = detect_dns_tunneling(src_ip)
+                if dns_r:
                     decision = "warn"
-                    reason   = dns_reason
-                    threat_added = add_threat(src_ip, "DNS Tunneling", dns_reason, "med")
+                    reason   = dns_r
+                    add_threat(src_ip, "DNS Tunneling", dns_r, "med", "detect_dns_tunnel")
 
         # ── Mise à jour des stats ─────────────────────────────────────────
         if decision == "block":
@@ -734,8 +1003,11 @@ def build_state_message() -> dict:
                 {"name": k, "count": v, "pct": round(v * 100 / proto_total, 1)}
                 for k, v in sorted(STATE.proto_stats.items(), key=lambda x: -x[1])
             ],
-            "blocked_ips":    list(BLOCKED_IPS)[:50],
-            "rules":          rules_out,
+            "blocked_ips":           list(BLOCKED_IPS)[:50],
+            "rules":                 rules_out,
+            "detection_params":      DETECTION_PARAMS,
+            "geo_blocked_countries": list(GEO_BLOCKED_COUNTRIES),
+            "geo_country_names":     GEO_COUNTRY_NAMES,
         }
 
 async def ws_handler(websocket):
@@ -792,6 +1064,26 @@ async def handle_ws_command(ws, msg: dict):
     elif cmd == "clear_threats":
         STATE.threats.clear()
         await ws.send(json.dumps({"type": "threats_cleared"}))
+
+    elif cmd == "update_param":
+        key = msg.get("key")
+        val = msg.get("value")
+        if key in DETECTION_PARAMS:
+            p = DETECTION_PARAMS[key]
+            val = max(p["min"], min(p["max"], int(val)))
+            DETECTION_PARAMS[key]["value"] = val
+            # Sync to CFG
+            if hasattr(CFG, key):
+                setattr(CFG, key, val)
+            log.info(f"[PARAM] {key} = {val}")
+            await ws.send(json.dumps({"type": "param_updated", "key": key, "value": val}))
+
+    elif cmd == "set_geo_countries":
+        global GEO_BLOCKED_COUNTRIES
+        countries = msg.get("countries", [])
+        GEO_BLOCKED_COUNTRIES = set(countries)
+        log.info(f"[GEO] Pays bloqués: {GEO_BLOCKED_COUNTRIES}")
+        await ws.send(json.dumps({"type": "geo_updated", "countries": list(GEO_BLOCKED_COUNTRIES)}))
 
     elif cmd == "generate_report":
         rtype  = msg.get("report_type", "full")   # packets / threats / blocked_ips / full
