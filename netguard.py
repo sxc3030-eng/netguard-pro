@@ -238,6 +238,189 @@ HTTP_SCANNER_AGENTS = {
     "openvas", "w3af", "havij", "sqlninja", "hydra",
 }
 
+
+# ═══════════════════════════════════════════════════════════════════════════
+# MODULE SURICATA — Règles Emerging Threats open source
+# ═══════════════════════════════════════════════════════════════════════════
+
+import urllib.request as _urllib_request
+
+SURICATA_RULES: list   = []
+SURICATA_LOADED: int   = 0
+SURICATA_ENABLED: bool = True
+
+ET_RULESETS = {
+    "et_scan":    "https://rules.emergingthreats.net/open/suricata/rules/emerging-scan.rules",
+    "et_exploit": "https://rules.emergingthreats.net/open/suricata/rules/emerging-exploit.rules",
+    "et_malware": "https://rules.emergingthreats.net/open/suricata/rules/emerging-malware.rules",
+    "et_dos":     "https://rules.emergingthreats.net/open/suricata/rules/emerging-dos.rules",
+}
+
+# Règles intégrées statiques — fonctionnent sans internet (subset Emerging Threats)
+BUILTIN_ET_RULES = [
+    # (sid, msg, proto, dst_ports, content_bytes, action)
+    # Scans
+    (2000537, "ET SCAN SSH Scan",                 "tcp", frozenset({22}),               None,               "alert"),
+    (2000536, "ET SCAN RDP Scan",                 "tcp", frozenset({3389}),              None,               "alert"),
+    (2001569, "ET SCAN Nmap",                     "tcp", None,                           b"Nmap",            "alert"),
+    (2009358, "ET SCAN Nikto",                    "tcp", frozenset({80,443,8080}),        b"Nikto",           "alert"),
+    (2010935, "ET SCAN Masscan",                  "tcp", None,                           b"masscan",         "alert"),
+    (2001219, "ET SCAN SqlMap",                   "tcp", frozenset({80,443,8080}),        b"sqlmap",          "alert"),
+    (2010936, "ET SCAN ZGrab",                    "tcp", None,                           b"zgrab",           "alert"),
+    # Exploits
+    (2014819, "ET EXPLOIT Log4Shell",             "tcp", None,                           b"${jndi:",         "drop"),
+    (2027865, "ET EXPLOIT Log4Shell v2",          "tcp", None,                           b"${${",            "drop"),
+    (2035034, "ET EXPLOIT Log4j ctx",             "tcp", None,                           b"${ctx:",          "drop"),
+    (2019401, "ET EXPLOIT ShellShock",            "tcp", frozenset({80,443}),             b"(){",             "drop"),
+    (2023476, "ET EXPLOIT EternalBlue SMB",       "tcp", frozenset({445}),               b"\x00SMB",         "drop"),
+    (2024364, "ET EXPLOIT ProxyLogon",            "tcp", frozenset({443}),               b"autodiscover",    "alert"),
+    (2034716, "ET EXPLOIT Spring4Shell",          "tcp", frozenset({80,443,8080}),        b"class.module",    "drop"),
+    # Malware C2
+    (2016922, "ET MALWARE Metasploit",            "tcp", None,                           b"METERPRETER",     "drop"),
+    (2003068, "ET MALWARE Cobalt Strike",         "tcp", None,                           b"beacon.x86",      "drop"),
+    (2024449, "ET MALWARE AsyncRAT",              "tcp", frozenset({6606,7707,8808}),    None,               "drop"),
+    (2025234, "ET MALWARE Mimikatz",              "tcp", None,                           b"mimikatz",        "drop"),
+    (2016476, "ET MALWARE PS Empire",             "tcp", None,                           b"powershell -nop", "drop"),
+    # DoS
+    (2008446, "ET DOS Slowloris",                 "tcp", frozenset({80,443}),             b"Keep-Alive: ",    "alert"),
+    # SQL Injection
+    (2006446, "ET WEB SQL UNION SELECT",          "tcp", frozenset({80,443,8080}),        b"UNION SELECT",    "drop"),
+    (2101201, "ET WEB PHP RFI",                   "tcp", frozenset({80,443,8080}),        b"http://",         "alert"),
+    # Crypto mining
+    (2025853, "ET MINING Monero Stratum",         "tcp", frozenset({3333,4444,14444}),   b"stratum+tcp",     "drop"),
+    (2027275, "ET MINING CoinHive",               "tcp", frozenset({80,443}),             b"coinhive",        "drop"),
+    # Exfiltration
+    (2012647, "ET POLICY Tor DNS Query",          "udp", frozenset({53}),                b".onion",          "alert"),
+    (2019888, "ET POLICY Ngrok Tunnel",           "tcp", None,                           b"ngrok.io",        "alert"),
+]
+
+
+def _load_builtin_rules():
+    """Charge les règles intégrées dans SURICATA_RULES"""
+    global SURICATA_RULES, SURICATA_LOADED
+    rules = []
+    for sid, msg, proto, ports, content, action in BUILTIN_ET_RULES:
+        rules.append({
+            "sid": sid, "msg": msg, "proto": proto,
+            "dst_ports": ports, "content": content, "action": action,
+            "source": "builtin",
+        })
+    SURICATA_RULES = rules
+    SURICATA_LOADED = len(rules)
+    log.info(f"[SURICATA] {SURICATA_LOADED} règles intégrées chargées")
+
+
+def _parse_rule_line(line: str) -> Optional[dict]:
+    """Parse une ligne de règle Suricata .rules"""
+    line = line.strip()
+    if not line or line.startswith("#"):
+        return None
+    try:
+        # Extraire action + options entre parenthèses
+        paren = line.index("(")
+        header = line[:paren].split()
+        options_str = line[paren+1:line.rindex(")")]
+        if len(header) < 7:
+            return None
+        action = header[0]
+        proto  = header[1].lower()
+        # Parser les options clé:valeur
+        opts: dict = {}
+        for part in re.split(r";\s*", options_str):
+            part = part.strip()
+            if ":" in part:
+                k, v = part.split(":", 1)
+                opts[k.strip()] = v.strip().strip('"')
+            elif part:
+                opts[part] = True
+        msg     = opts.get("msg", "Unknown")
+        sid_str = opts.get("sid", "0")
+        sid     = int(sid_str) if sid_str.isdigit() else 0
+        content = opts.get("content", None)
+        # Extraire ports
+        try:
+            dst_port_str = header[6]
+            if dst_port_str not in {"any", "!any"}:
+                ports = set()
+                for p in re.findall(r"\d+", dst_port_str):
+                    ports.add(int(p))
+                dst_ports = frozenset(ports) if ports else None
+            else:
+                dst_ports = None
+        except (IndexError, ValueError):
+            dst_ports = None
+        # Convertir content en bytes
+        content_bytes = None
+        if content:
+            try:
+                content_bytes = content.encode("utf-8", errors="replace")
+            except Exception:
+                pass
+        return {
+            "sid": sid, "msg": msg, "proto": proto,
+            "dst_ports": dst_ports, "content": content_bytes,
+            "action": action, "source": "et_online",
+        }
+    except Exception:
+        return None
+
+
+def load_et_rules_online(ruleset_key: str = "et_scan") -> int:
+    """Télécharge et charge un ruleset Emerging Threats"""
+    global SURICATA_RULES, SURICATA_LOADED
+    url = ET_RULESETS.get(ruleset_key)
+    if not url:
+        return 0
+    try:
+        log.info(f"[SURICATA] Téléchargement: {url}")
+        req = _urllib_request.Request(url, headers={"User-Agent": "NetGuard-Pro/1.5"})
+        with _urllib_request.urlopen(req, timeout=15) as resp:
+            lines = resp.read().decode("utf-8", errors="replace").splitlines()
+        new_rules = []
+        for line in lines:
+            r = _parse_rule_line(line)
+            if r:
+                new_rules.append(r)
+        # Merge avec les règles existantes (pas de doublons par sid)
+        existing_sids = {r["sid"] for r in SURICATA_RULES}
+        added = [r for r in new_rules if r["sid"] not in existing_sids]
+        SURICATA_RULES.extend(added)
+        SURICATA_LOADED = len(SURICATA_RULES)
+        log.info(f"[SURICATA] +{len(added)} règles depuis {ruleset_key} — total: {SURICATA_LOADED}")
+        return len(added)
+    except Exception as e:
+        log.warning(f"[SURICATA] Erreur téléchargement {ruleset_key}: {e}")
+        return 0
+
+
+def suricata_match(src_ip: str, dst_port: int, proto: str, payload: Optional[bytes]) -> Optional[dict]:
+    """
+    Teste un paquet contre toutes les règles Suricata chargées.
+    Retourne la première règle qui correspond, ou None.
+    """
+    if not SURICATA_ENABLED or not SURICATA_RULES:
+        return None
+    proto_lower = proto.lower()
+    for rule in SURICATA_RULES:
+        # Filtrer par protocole
+        if rule["proto"] not in ("any", proto_lower, "ip"):
+            continue
+        # Filtrer par port
+        if rule["dst_ports"] and dst_port not in rule["dst_ports"]:
+            continue
+        # Filtrer par contenu (si défini)
+        if rule["content"] and payload:
+            if rule["content"] not in payload:
+                continue
+        elif rule["content"] and not payload:
+            continue
+        return rule
+    return None
+
+
+# Initialiser les règles au chargement du module
+_load_builtin_rules()
+
 # ─── État global ──────────────────────────────────────────────────────────
 class NetState:
     def __init__(self):
@@ -1521,6 +1704,49 @@ async def handle_ws_command(ws, msg: dict):
         with STATE.lock:
             alerts = list(STATE.dpi_alerts)[:50]
         await ws.send(json.dumps({"type": "dpi_alerts", "alerts": alerts}))
+
+    elif cmd == "load_et_rules":
+        key = msg.get("ruleset", "et_scan")
+        def _load():
+            added = load_et_rules_online(key)
+            asyncio.run_coroutine_threadsafe(
+                ws.send(json.dumps({"type":"et_loaded","ruleset":key,"added":added,"total":SURICATA_LOADED})),
+                asyncio.get_event_loop()
+            )
+        threading.Thread(target=_load, daemon=True).start()
+        await ws.send(json.dumps({"type":"et_loading","ruleset":key}))
+
+    elif cmd == "toggle_suricata":
+        global SURICATA_ENABLED
+        SURICATA_ENABLED = not SURICATA_ENABLED
+        await ws.send(json.dumps({"type":"suricata_state","enabled":SURICATA_ENABLED,"rules":SURICATA_LOADED}))
+
+    elif cmd == "get_suricata_stats":
+        await ws.send(json.dumps({
+            "type":    "suricata_stats",
+            "enabled": SURICATA_ENABLED,
+            "loaded":  SURICATA_LOADED,
+            "rulesets": list(ET_RULESETS.keys()),
+        }))
+
+    elif cmd == "load_et_rules":
+        key = msg.get("ruleset", "et_scan")
+        def _do_load(k=key):
+            added = load_et_rules_online(k)
+            log.info(f"[SURICATA] {added} règles ajoutées depuis {k}")
+        threading.Thread(target=_do_load, daemon=True).start()
+        await ws.send(json.dumps({"type":"et_loading","ruleset":key}))
+
+    elif cmd == "toggle_suricata":
+        global SURICATA_ENABLED
+        SURICATA_ENABLED = not SURICATA_ENABLED
+        await ws.send(json.dumps({"type":"suricata_state","enabled":SURICATA_ENABLED,"loaded":SURICATA_LOADED}))
+
+    elif cmd == "get_suricata_stats":
+        await ws.send(json.dumps({
+            "type":"suricata_stats","enabled":SURICATA_ENABLED,
+            "loaded":SURICATA_LOADED,"rulesets":list(ET_RULESETS.keys()),
+        }))
 
     elif cmd == "generate_report":
         rtype  = msg.get("report_type", "full")   # packets / threats / blocked_ips / full
