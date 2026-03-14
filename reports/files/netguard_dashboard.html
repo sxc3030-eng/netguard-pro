@@ -1693,12 +1693,12 @@ function loadET(ruleset) {
   sendCmd({cmd:'load_et_rules', ruleset});
 }
 
+// ── Navigation ─────────────────────────────────────────────────────────────
 const TABS = ['dashboard','packets','threats','blocked','rules','reports','config','honeypot','dns','lan','alerts','blacklist','ratelimit','fingerprint','users','audit'];
-
 const TAB_TITLES = {dashboard:'Tableau de bord',packets:'Paquets live',threats:'Menaces',
   blocked:'IPs bloquées',rules:'Règles pare-feu',reports:'Rapports',config:'Configuration',
   honeypot:'Honeypot — Piège à attaquants',dns:'DNS Blackhole',lan:'Scan Réseau LAN',alerts:'Alertes — Email & Notifications',
-  blacklist:'Blacklist communautaire',ratelimit:'Rate Limiting dynamique',fingerprint:'Fingerprinting OS',users:'Gestion des utilisateurs',audit:"Log d'audit"};
+  blacklist:'Blacklist communautaire',ratelimit:'Rate Limiting dynamique',fingerprint:'Fingerprinting OS',users:'Gestion des utilisateurs',audit:'Log d\'audit'};
 
 function showTab(id, navEl) {
   TABS.forEach(t => {
@@ -1992,15 +1992,17 @@ function renderAuditLog(entries) {
 
 function exportAudit() {
   const rows = document.querySelectorAll('#audit-tbody tr');
-  const lines = ['Date/Heure,Utilisateur,Action,Cible,Details'];
-  rows.forEach(function(r) {
+  let csv = 'Date/Heure,Utilisateur,Action,Cible,Détails
+';
+  rows.forEach(r => {
     const cells = r.querySelectorAll('td');
     if (cells.length >= 5) {
-      const row = [cells[0].textContent, cells[1].textContent, cells[2].textContent, cells[3].textContent, cells[4].textContent];
-      lines.push(row.map(function(c){ return '"' + c.replace(/"/g, '""') + '"'; }).join(','));
+      csv += [cells[0].textContent, cells[1].textContent, cells[2].textContent, cells[3].textContent, cells[4].textContent]
+        .map(c => '"'+c.replace(/"/g,'""')+'"').join(',') + '
+';
     }
   });
-  const blob = new Blob([lines.join('\n')], {type: 'text/csv'});
+  const blob = new Blob([csv], {type:'text/csv'});
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = 'netguard_audit_' + new Date().toISOString().slice(0,10) + '.csv';
@@ -2119,26 +2121,27 @@ const _role  = localStorage.getItem('ng_role') || 'admin';
 const _name  = localStorage.getItem('ng_name') || 'Admin';
 
 async function checkAuth() {
-  // Afficher l'utilisateur connecté dans la topbar
-  const el = document.getElementById('user-info');
-  if (el) el.textContent = (_name || 'Admin') + ' (' + (_role || 'admin') + ')';
-  if (_role === 'viewer') {
-    document.querySelectorAll('.btn-red, #pause-btn').forEach(function(b){ b.style.opacity = '.4'; });
-  }
-  // Vérifier le token si présent, mais ne pas bloquer si backend absent
-  if (!_token) return;
+  if (!_token) { window.location.href = 'netguard_login.html'; return; }
   try {
-    const r = await fetch('http://localhost:8080/auth/verify', {
+    const _authPort = '8080';
+  const _authProto = 'http';
+  const r = await fetch(`${_authProto}://localhost:${_authPort}/auth/verify`, {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({token: _token}),
-      signal: AbortSignal.timeout(2000)
+      body: JSON.stringify({token: _token})
     });
     const d = await r.json();
-    if (!d.ok && _token) {
-      window.location.href = 'netguard_login.html';
+    if (!d.ok) { window.location.href = 'netguard_login.html'; }
+    else {
+      // Afficher l'utilisateur connecté
+      const el = document.getElementById('user-info');
+      if (el) el.textContent = _name + ' (' + _role + ')';
+      // Masquer les boutons si viewer
+      if (_role === 'viewer') {
+        document.querySelectorAll('.btn-red, #pause-btn').forEach(b => b.style.opacity = '.4');
+      }
     }
   } catch(e) {
-    // Backend pas encore prêt ou absent — on continue sans redirection
+    // Backend pas encore prêt — on laisse passer sans redirection
   }
 }
 

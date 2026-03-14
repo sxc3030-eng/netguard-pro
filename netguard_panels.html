@@ -12,12 +12,12 @@
   --text:#e8e8f0;--text2:#9090a8;--text3:#5a5a72;
   --blue:#4d9fff;--red:#ff4d6a;--green:#3dffb4;--amber:#ffb347;--purple:#b47dff;
 }
-body{font-family:'Outfit',sans-serif;background:var(--bg);color:var(--text);height:100vh;display:flex;flex-direction:column;overflow:hidden}
-.titlebar{background:var(--bg2);border-bottom:1px solid var(--border);padding:8px 16px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+body{font-family:'Outfit',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;height:100vh;display:flex;flex-direction:column}
+.titlebar{background:var(--bg2);border-bottom:1px solid var(--border);padding:8px 16px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;width:100%;box-sizing:border-box}
 .status-dot{width:7px;height:7px;border-radius:50%;background:var(--green);animation:pulse 2s infinite}
 .status-dot.off{background:var(--red);animation:none}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
-.content{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:16px}
+.content{flex:1;overflow-y:auto;padding:20px;display:flex;flex-direction:column;gap:16px;min-height:0}
 .card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;overflow:hidden;flex:1}
 .card-header{padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
 .card-title{font-size:14px;font-weight:500;color:var(--text)}
@@ -55,6 +55,7 @@ const PANEL_NAMES = {
   threats: 'Menaces en temps réel',
   pie: 'Pays attaquants',
   topips: 'Top IPs suspectes',
+  attacks: 'Types d\'attaques — toutes menaces',
 };
 document.getElementById('panel-name').textContent = '— ' + (PANEL_NAMES[panel] || panel);
 document.title = 'NetGuard — ' + (PANEL_NAMES[panel] || panel);
@@ -102,6 +103,15 @@ if (panel === 'packets') {
         <div class="card-header"><span class="card-title">Classement détaillé</span></div>
         <div id="pie-legend" style="padding:16px;overflow-y:auto"></div>
       </div>
+    </div>`;
+} else if (panel === 'attacks') {
+  content.innerHTML = `
+    <div class="card" style="flex:1">
+      <div class="card-header">
+        <span class="card-title">Types d'attaques — toutes menaces bloquées</span>
+        <span id="attacks-total" style="font-size:11px;color:var(--text3)">0 menaces</span>
+      </div>
+      <div style="padding:20px;overflow-y:auto;flex:1" id="attacks-chart"></div>
     </div>`;
 } else if (panel === 'topips') {
   content.innerHTML = `
@@ -201,6 +211,84 @@ function renderPie(hits) {
     </div>`).join('');
 }
 
+const ATTACK_COLORS = {
+  'Scan':'#4d9fff','Brute Force':'#ff4d6a','DDoS':'#ffb347',
+  'DNS':'#00d4ff','Web':'#b47dff','IDS':'#ff6b9d','Malware':'#ff1a4d',
+  'Rate Limit':'#ff7b00','Blacklist':'#c040c0','Honeypot':'#3dffb4',
+  'Géoblocage':'#f0a000','Auto-block':'#e05050','Autre':'#5a5a72'
+};
+const _accum = {};
+const _seenIds = new Set();
+
+function _cat(type) {
+  const t = (type||'').toLowerCase();
+  if (t.includes('scan') || t.includes('port'))          return 'Scan';
+  if (t.includes('brute') || t.includes('ssh'))          return 'Brute Force';
+  if (t.includes('flood') || t.includes('dos'))          return 'DDoS';
+  if (t.includes('dns'))                                  return 'DNS';
+  if (t.includes('dpi') || t.includes('sql') || t.includes('xss') || t.includes('web')) return 'Web';
+  if (t.includes('ids') || t.includes('suricata'))       return 'IDS';
+  if (t.includes('malware') || t.includes('c2'))         return 'Malware';
+  if (t.includes('rate'))                                 return 'Rate Limit';
+  if (t.includes('blacklist'))                            return 'Blacklist';
+  if (t.includes('honeypot'))                             return 'Honeypot';
+  if (t.includes('geo'))                                  return 'Géoblocage';
+  if (t.includes('auto'))                                 return 'Auto-block';
+  return 'Autre';
+}
+
+function renderAttacks(threats) {
+  if (!threats) return;
+  threats.forEach(t => {
+    const id = t.id || (t.timestamp + t.src_ip);
+    if (_seenIds.has(id)) return;
+    _seenIds.add(id);
+    const cat = _cat(t.type);
+    if (!_accum[cat]) _accum[cat] = {count:0, ips:[]};
+    _accum[cat].count++;
+    const ip = t.src_ip || '';
+    if (ip && !_accum[cat].ips.includes(ip)) {
+      _accum[cat].ips.push(ip);
+      if (_accum[cat].ips.length > 10) _accum[cat].ips.shift();
+    }
+  });
+
+  const el = document.getElementById('attacks-chart');
+  const total = document.getElementById('attacks-total');
+  if (!el) return;
+
+  const entries = Object.entries(_accum).sort((a,b) => b[1].count - a[1].count);
+  const grand = entries.reduce((s,[,d])=>s+d.count,0);
+  if (total) total.textContent = grand + ' menaces';
+
+  if (!entries.length) {
+    el.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text3);font-size:13px">En attente de menaces…</div>';
+    return;
+  }
+
+  const max = entries[0][1].count;
+  el.innerHTML = entries.map(([type, data]) => {
+    const color = ATTACK_COLORS[type] || '#5a5a72';
+    const pct   = Math.round(data.count*100/max);
+    const pctTotal = Math.round(data.count*100/grand);
+    const ips   = data.ips.slice(-5).reverse();
+    return `
+      <div style="margin-bottom:16px">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+          <span style="font-size:13px;font-weight:600;color:${color};min-width:110px">${type}</span>
+          <div style="flex:1;height:8px;background:var(--bg4);border-radius:4px;overflow:hidden">
+            <div style="width:${pct}%;height:100%;background:${color};border-radius:4px;transition:.4s"></div>
+          </div>
+          <span style="font-size:14px;font-weight:700;font-family:'Geist Mono',monospace;color:${color};min-width:36px;text-align:right">${data.count}</span>
+          <span style="font-size:11px;color:var(--text3);min-width:32px">${pctTotal}%</span>
+        </div>
+        <div style="padding-left:120px;display:flex;gap:6px;flex-wrap:wrap">
+          ${ips.map(ip => `<span style="font-size:10px;font-family:'Geist Mono',monospace;background:${color}18;color:${color};padding:2px 7px;border-radius:3px">${ip}</span>`).join('')}
+        </div>
+      </div>`;
+  }).join('');
+}
+
 function renderTopIps(ips, blocked) {
   const el = document.getElementById('ips-chart');
   if (!el || !ips || !ips.length) return;
@@ -245,6 +333,7 @@ function connect() {
       else if (panel === 'threats') renderThreats(msg.threats);
       else if (panel === 'pie') renderPie(msg.geo_hits);
       else if (panel === 'topips') renderTopIps(msg.top_ips, msg.blocked_ips);
+      else if (panel === 'attacks') renderAttacks(msg.threats);
     } catch(_) {}
   };
   ws.onerror = () => {};

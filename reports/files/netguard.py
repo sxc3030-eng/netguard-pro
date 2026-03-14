@@ -2,8 +2,8 @@
 NetGuard Pro - Moteur de surveillance réseau
 Capture, analyse et bloque les paquets en temps réel
 Auteur: NetGuard Pro
-Version: 1.6.0
-Usage: python netguard.py [--interface eth0] [--port 8765] [--no-block]
+Version: 2.3.0
+Usage: python netguard.py [--interface eth0] [--port 8765] [--no-block] [--api] [--kiosk]
 """
 
 import asyncio
@@ -17,8 +17,10 @@ import ipaddress
 import re
 import struct
 import socket
+import subprocess
+import urllib.request
 from collections import defaultdict, deque
-from datetime import datetime
+from datetime import datetime, timedelta
 from dataclasses import dataclass, asdict, field
 from typing import Optional
 import os
@@ -159,9 +161,8 @@ def get_geo_info(ip: str) -> dict:
 def _fetch_city_async(ip: str):
     """Récupère la ville et coordonnées en arrière-plan"""
     try:
-        import urllib.request
         url = f"https://ipapi.co/{ip}/json/"
-        req = urllib.request.Request(url, headers={"User-Agent": "NetGuardPro/1.9"})
+        req = urllib.request.Request(url, headers={"User-Agent": "NetGuardPro/2.3"})
         with urllib.request.urlopen(req, timeout=3) as r:
             data = json.loads(r.read().decode())
         _geo_city_cache[ip] = {
@@ -173,12 +174,145 @@ def _fetch_city_async(ip: str):
             "org":       data.get("org", ""),
             "asn":       data.get("asn", ""),
         }
-        # Update intel after geo fetch
         _update_ip_intel(ip, data)
     except Exception:
         pass
 
-# ─── Listes VPN/Tor/Proxy connues ─────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════
+# v2.2.0 — BLACKLIST COMMUNAUTAIRE
+# ═══════════════════════════════════════════════════════════════════════════
+
+COMMUNITY_BLACKLIST: set = set()
+_BLACKLIST_LAST_UPDATE: float = 0
+BLACKLIST_UPDATE_INTERVAL: int = 3600 * 6
+
+def update_community_blacklist():
+    global COMMUNITY_BLACKLIST, _BLACKLIST_LAST_UPDATE
+    if time.time() - _BLACKLIST_LAST_UPDATE < BLACKLIST_UPDATE_INTERVAL:
+        return
+    new_ips = set()
+    sources = [
+        ("Spamhaus DROP",  "https://www.spamhaus.org/drop/drop.txt"),
+        ("Spamhaus EDROP", "https://www.spamhaus.org/drop/edrop.txt"),
+        ("Blocklist.de",   "https://lists.blocklist.de/lists/all.txt"),
+    ]
+    for name, url in sources:
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "NetGuardPro/2.3"})
+            with urllib.request.urlopen(req, timeout=10) as r:
+                for line in r.read().decode(errors="ignore").splitlines():
+                    line = line.strip()
+                    if not line or line.startswith(";") or line.startswith("#"):
+                        continue
+                    ip = line.split(";")[0].split()[0].strip()
+                    try:
+                        ipaddress.ip_address(ip)
+                        new_ips.add(ip)
+                    except ValueError:
+                        try:
+                            net = ipaddress.ip_network(ip, strict=False)
+                            if net.prefixlen >= 20:
+                                new_ips.update(str(h) for h in list(net.hosts())[:50])
+                        except ValueError:
+                            pass
+            log.info(f"[BLACKLIST] {name}: OK")
+        except Exception as e:
+            log.warning(f"[BLACKLIST] {name}: {e}")
+    if new_ips:
+        COMMUNITY_BLACKLIST = new_ips
+        _BLACKLIST_LAST_UPDATE = time.time()
+        log.info(f"[BLACKLIST] {len(COMMUNITY_BLACKLIST)} IPs chargées")
+
+def is_community_blacklisted(ip: str) -> bool:
+    return ip in COMMUNITY_BLACKLIST
+
+# ═══════════════════════════════════════════════════════════════════════════
+# v2.2.0 — RATE LIMITING DYNAMIQUE
+# ═══════════════════════════════════════════════════════════════════════════
+
+_rate_limit_tracker: dict = {}
+RATE_LIMIT_LEVELS = [
+    {"threshold": 10,  "window": 5,  "action": "warn",    "label": "Suspect"},
+    {"threshold": 30,  "window": 10, "action": "throttle","label": "Ralenti"},
+    {"threshold": 60,  "window": 15, "action": "block",   "label": "Bloqué"},
+]
+
+def rate_limit_check(ip: str) -> Optional[dict]:
+    if is_private(ip):
+        return None
+    now = time.time()
+    if ip not in _rate_limit_tracker:
+        _rate_limit_tracker[ip] = {"count": 0, "window_start": now, "level": 0}
+    tracker = _rate_limit_tracker[ip]
+    elapsed = now - tracker["window_start"]
+    if elapsed > 60:
+        tracker["count"] = 0
+        tracker["window_start"] = now
+        tracker["level"] = 0
+    tracker["count"] += 1
+    for i, level in enumerate(RATE_LIMIT_LEVELS):
+        if tracker["count"] >= level["threshold"] and elapsed <= level["window"]:
+            tracker["level"] = i
+            return level
+    return None
+
+def get_rate_limit_stats() -> list:
+    now = time.time()
+    stats = []
+    for ip, data in _rate_limit_tracker.items():
+        if data["count"] >= RATE_LIMIT_LEVELS[0]["threshold"]:
+            elapsed = max(now - data["window_start"], 1)
+            stats.append({
+                "ip":    ip,
+                "count": data["count"],
+                "rate":  round(data["count"] / elapsed, 1),
+                "level": data.get("level", 0),
+                "label": RATE_LIMIT_LEVELS[min(data.get("level",0), len(RATE_LIMIT_LEVELS)-1)]["label"],
+            })
+    return sorted(stats, key=lambda x: -x["count"])[:20]
+
+# ═══════════════════════════════════════════════════════════════════════════
+# v2.2.0 — FINGERPRINTING OS
+# ═══════════════════════════════════════════════════════════════════════════
+
+_os_fingerprints: dict = {}
+
+OS_TTL_MAP = [
+    (64,  "Linux / Android", "🐧"),
+    (128, "Windows",         "🪟"),
+    (255, "Cisco / Réseau",  "🔧"),
+    (254, "Solaris / macOS", "🍎"),
+    (60,  "macOS",           "🍎"),
+]
+OS_WINDOW_MAP = {
+    8192:  ("Windows 7/10/11","🪟"),
+    65535: ("BSD / macOS",    "🍎"),
+    5840:  ("Linux",          "🐧"),
+    5720:  ("Linux",          "🐧"),
+    14600: ("Linux",          "🐧"),
+    29200: ("Linux 4.x",      "🐧"),
+}
+
+def fingerprint_os(pkt) -> Optional[dict]:
+    if not HAS_SCAPY or not pkt.haslayer(IP):
+        return None
+    try:
+        ip_layer = pkt[IP]
+        ttl, src_ip = ip_layer.ttl, ip_layer.src
+        os_guess, os_icon, confidence = "Inconnu", "❓", 0
+        for ref_ttl, name, icon in OS_TTL_MAP:
+            if abs(ttl - ref_ttl) <= 5:
+                os_guess, os_icon, confidence = name, icon, 60
+                break
+        if pkt.haslayer(TCP) and pkt[TCP].window in OS_WINDOW_MAP:
+            os_guess, os_icon = OS_WINDOW_MAP[pkt[TCP].window]
+            confidence = 80
+        result = {"os": os_guess, "icon": os_icon, "ttl": ttl, "confidence": confidence}
+        if src_ip not in _os_fingerprints:
+            _os_fingerprints[src_ip] = result
+        return result
+    except Exception:
+        return None
 _KNOWN_VPN_ORGS = [
     "nordvpn","expressvpn","surfshark","mullvad","protonvpn","ipvanish",
     "cyberghost","privatevpn","strongvpn","hidemyass","torguard","airvpn",
@@ -764,6 +898,13 @@ def add_threat(src_ip: str, threat_type: str, description: str, severity: str, r
     # Update risk score
     _compute_risk_score(src_ip)
 
+    # Envoyer alerte si sévérité suffisante
+    if severity in ("critical", "high"):
+        threading.Thread(target=send_alert, args=(threat,), daemon=True).start()
+
+    # Sauvegarder dans l'historique persistant
+    threading.Thread(target=history_append, args=(threat,), daemon=True).start()
+
     log.warning(f"[THREAT/{severity.upper()}] {threat_type} — {src_ip} — {description}")
     return threat
 
@@ -868,6 +1009,28 @@ def analyze_packet(pkt):
         elif not is_private(src_ip) and dst_port in CFG.always_block_ports:
             decision = "block"
             reason   = f"Port {dst_port} toujours bloqué"
+
+        # ── Community Blacklist ─────────────────────────────────────────
+        if decision == "allow" and not is_private(src_ip) and is_community_blacklisted(src_ip):
+            decision = "block"
+            reason   = "Blacklist communautaire (Spamhaus/Blocklist.de)"
+            add_threat(src_ip, "Blacklist communautaire", f"IP dans la blacklist Spamhaus/Blocklist.de", "high")
+
+        # ── Rate Limiting dynamique ─────────────────────────────────────
+        if decision == "allow" and not is_private(src_ip):
+            rl = rate_limit_check(src_ip)
+            if rl:
+                if rl["action"] == "block":
+                    decision = "block"
+                    reason   = f"Rate limit: {rl['label']} ({rl['threshold']} req/{rl['window']}s)"
+                    add_threat(src_ip, "Rate Limit", f"{rl['label']}: {rl['threshold']}+ paquets/{rl['window']}s", "med")
+                elif rl["action"] == "warn" and decision == "allow":
+                    decision = "warn"
+                    reason   = f"Rate limit: {rl['label']}"
+
+        # ── Fingerprinting OS ───────────────────────────────────────────
+        if HAS_SCAPY and src_ip not in _os_fingerprints:
+            fingerprint_os(pkt)
 
         # ── DNS Blackhole ───────────────────────────────────────────────
         if RULES.get("detect_malicious_dns", {}).get("enabled", True) and pkt.haslayer("DNS"):
@@ -1116,6 +1279,11 @@ def build_state_message() -> dict:
             "dns_blackhole_count": len(DNS_BLACKHOLE),
             "dns_blackhole_hits":  sum(DNS_BLACKHOLE_HITS.values()),
             "lan_devices":      LAN_DEVICES,
+            # v2.2.0
+            "os_fingerprints":  dict(list(_os_fingerprints.items())[-30:]),
+            "rate_limit_stats": get_rate_limit_stats(),
+            "blacklist_size":   len(COMMUNITY_BLACKLIST),
+            "blacklist_updated": _BLACKLIST_LAST_UPDATE > 0,
         }
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1386,15 +1554,18 @@ async def handle_ws_command(ws, msg: dict):
         if ip:
             block_ip_os(ip, reason)
             add_threat(ip, "Blocage manuel", reason, "med")
+            audit_log(msg.get("user","dashboard"), "BLOCK_IP", ip, reason)
             await ws.send(json.dumps({"type": "ip_blocked", "ip": ip}))
     elif cmd == "unblock_ip":
         ip = msg.get("ip", "")
         if ip:
             unblock_ip_os(ip)
+            audit_log(msg.get("user","dashboard"), "UNBLOCK_IP", ip)
             await ws.send(json.dumps({"type": "ip_unblocked", "ip": ip}))
     elif cmd == "get_blocked_ips":
         await ws.send(json.dumps({"type": "blocked_ips", "ips": list(BLOCKED_IPS)}))
     elif cmd == "clear_threats":
+        audit_log(msg.get("user","dashboard"), "CLEAR_THREATS", "", "Effacement manuel des menaces")
         STATE.threats.clear()
         await ws.send(json.dumps({"type": "threats_cleared"}))
     elif cmd == "generate_report":
@@ -1511,28 +1682,150 @@ async def handle_ws_command(ws, msg: dict):
     elif cmd == "get_honeypot_hits":
         await ws.send(json.dumps({"type":"honeypot_hits","hits":HONEYPOT_HITS[-50:],"enabled":HONEYPOT_ENABLED}))
 
+    # ── Alertes email + toast ──────────────────────────────────────────────
+    elif cmd == "get_alert_config":
+        await ws.send(json.dumps({
+            "type": "alert_config",
+            "email_enabled":  ALERT_CFG.email_enabled,
+            "email_from":     ALERT_CFG.email_from,
+            "email_to":       ALERT_CFG.email_to,
+            "email_smtp":     ALERT_CFG.email_smtp,
+            "email_port":     ALERT_CFG.email_port,
+            "email_min_sev":  ALERT_CFG.email_min_sev,
+            "toast_enabled":  ALERT_CFG.toast_enabled,
+            "toast_min_sev":  ALERT_CFG.toast_min_sev,
+            "alert_cooldown": ALERT_CFG.alert_cooldown,
+        }))
+
+    elif cmd == "save_alert_config":
+        ALERT_CFG.email_enabled  = msg.get("email_enabled", False)
+        ALERT_CFG.email_from     = msg.get("email_from", "")
+        ALERT_CFG.email_to       = msg.get("email_to", "")
+        ALERT_CFG.email_smtp     = msg.get("email_smtp", "smtp.gmail.com")
+        ALERT_CFG.email_port     = int(msg.get("email_port", 587))
+        ALERT_CFG.email_password = msg.get("email_password", "")
+        ALERT_CFG.email_min_sev  = msg.get("email_min_sev", "high")
+        ALERT_CFG.toast_enabled  = msg.get("toast_enabled", True)
+        ALERT_CFG.toast_min_sev  = msg.get("toast_min_sev", "high")
+        ALERT_CFG.alert_cooldown = int(msg.get("alert_cooldown", 60))
+        save_settings()
+        await ws.send(json.dumps({"type":"alert_config_saved","ok":True}))
+        log.info(f"[ALERTS] Config sauvegardée — email: {ALERT_CFG.email_enabled}, toast: {ALERT_CFG.toast_enabled}")
+
+    elif cmd == "test_alert":
+        test_threat = {
+            "src_ip":      "185.220.101.5",
+            "severity":    "high",
+            "type":        "Test NetGuard Pro",
+            "description": "Ceci est un test d'alerte — tout fonctionne correctement !",
+            "country":     "RU",
+            "timestamp":   datetime.now().isoformat(),
+        }
+        _alert_last_sent.clear()  # reset cooldown pour le test
+        send_alert(test_threat)
+        await ws.send(json.dumps({"type":"alert_test_sent","ok":True}))
+
+    # ── Historique ─────────────────────────────────────────────────────────
+    elif cmd == "get_history":
+        period  = msg.get("period", "week")
+        data    = history_get(period)
+        await ws.send(json.dumps({"type":"history_data","period":period,"data":data[-500:]}))
+
+    elif cmd == "get_history_summary":
+        period  = msg.get("period", "week")
+        summary = history_summary(period)
+        await ws.send(json.dumps({"type":"history_summary","summary":summary}))
+
+    elif cmd == "get_audit":
+        limit = msg.get("limit", 200)
+        await ws.send(json.dumps({"type":"audit_log","entries":audit_get(limit)}))
+
+    elif cmd == "clear_history":
+        period = msg.get("period", "all")
+        history_clear(period)
+        await ws.send(json.dumps({"type":"history_cleared","period":period,"summary":history_summary("week")}))
+
+    # ── Blacklist communautaire ────────────────────────────────────────────
+    elif cmd == "update_blacklist":
+        def _do_update():
+            global _BLACKLIST_LAST_UPDATE
+            _BLACKLIST_LAST_UPDATE = 0  # force refresh
+            update_community_blacklist()
+            asyncio.run_coroutine_threadsafe(
+                ws.send(json.dumps({"type":"blacklist_updated","size":len(COMMUNITY_BLACKLIST)})),
+                asyncio.get_event_loop()
+            )
+        await ws.send(json.dumps({"type":"blacklist_updating"}))
+        threading.Thread(target=_do_update, daemon=True).start()
+
+    elif cmd == "get_blacklist_stats":
+        await ws.send(json.dumps({
+            "type":    "blacklist_stats",
+            "size":    len(COMMUNITY_BLACKLIST),
+            "updated": _BLACKLIST_LAST_UPDATE,
+            "enabled": len(COMMUNITY_BLACKLIST) > 0,
+        }))
+
+    # ── Rate limiting ──────────────────────────────────────────────────────
+    elif cmd == "get_rate_stats":
+        await ws.send(json.dumps({"type":"rate_stats","stats":get_rate_limit_stats()}))
+
+    # ── Fingerprinting ─────────────────────────────────────────────────────
+    elif cmd == "get_fingerprints":
+        await ws.send(json.dumps({"type":"fingerprints","data":dict(list(_os_fingerprints.items())[-50:])}))
+
 async def broadcast_state():
     global CLIENTS
     save_counter = 0
+    log.info("[WS] broadcast_state démarré")
     while True:
-        await asyncio.sleep(1)
-        snapshot_traffic()
-        save_counter += 1
-        if save_counter >= 30:
-            save_settings()
-            save_counter = 0
-        if CLIENTS:
-            msg = json.dumps(build_state_message())
-            dead = set()
-            for ws in CLIENTS:
-                try:
-                    await ws.send(msg)
-                except Exception:
-                    dead.add(ws)
-            CLIENTS = CLIENTS - dead
+        try:
+            await asyncio.sleep(1)
+            snapshot_traffic()
+            save_counter += 1
+            if save_counter >= 30:
+                save_settings()
+                save_counter = 0
+                # Backup quotidien
+                threading.Thread(target=run_backup, daemon=True).start()
+            if CLIENTS:
+                msg = json.dumps(build_state_message())
+                dead = set()
+                for client in list(CLIENTS):
+                    try:
+                        await client.send(msg)
+                    except Exception:
+                        dead.add(client)
+                CLIENTS = CLIENTS - dead
+        except asyncio.CancelledError:
+            log.info("[WS] broadcast_state annulé")
+            break
+        except Exception as e:
+            log.error(f"[WS] Erreur broadcast: {e}")
+            await asyncio.sleep(1)
+            continue
 
 async def ws_handler(websocket):
     global CLIENTS
+    # Vérifier le token d'authentification
+    token = None
+    try:
+        path = websocket.request.path if hasattr(websocket, 'request') else ""
+        if "?" in path:
+            params = dict(p.split("=") for p in path.split("?")[1].split("&") if "=" in p)
+            token = params.get("token", "")
+    except Exception:
+        pass
+
+    # Si auth activée, vérifier le token
+    if CFG.__dict__.get("auth_enabled", True) and token:
+        session = verify_session(token)
+        if not session:
+            log.warning(f"[AUTH] Token invalide — connexion refusée: {websocket.remote_address}")
+            await websocket.close(1008, "Token invalide")
+            return
+        log.info(f"[WS] {session['user']} ({session['role']}) connecté")
+    
     CLIENTS.add(websocket)
     log.info(f"[WS] Client connecté: {websocket.remote_address}")
     try:
@@ -1694,31 +1987,766 @@ def _run_demo_mode():
                     "masked": random.choice([True, False]),
                 })
 
+async def rest_api_handler(reader, writer):
+    """Serveur REST API HTTP simple — GET /api/state, /api/threats, /api/blocked"""
+    try:
+        request = await reader.read(1024)
+        req_str = request.decode(errors="ignore")
+        path = req_str.split(" ")[1] if " " in req_str else "/"
+
+        cors_headers = "Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, POST\r\n"
+
+        if path == "/api/state":
+            body = json.dumps(build_state_message())
+        elif path == "/api/threats":
+            body = json.dumps(list(STATE.threats))
+        elif path == "/api/blocked":
+            body = json.dumps(list(BLOCKED_IPS))
+        elif path == "/api/history":
+            body = json.dumps(history_get("day"))
+        elif path == "/api/summary":
+            body = json.dumps(history_summary("week"))
+        elif path == "/api/fingerprints":
+            body = json.dumps(_os_fingerprints)
+        elif path == "/api/rate_stats":
+            body = json.dumps(get_rate_limit_stats())
+        elif path.startswith("/api/ip/"):
+            ip = path.split("/api/ip/")[1]
+            body = json.dumps({
+                "ip":       ip,
+                "blocked":  ip in BLOCKED_IPS,
+                "hits":     STATE.ip_hit_counter.get(ip, 0),
+                "risk":     STATE.ip_risk_scores.get(ip, 0),
+                "intel":    STATE.ip_intel.get(ip, {}),
+                "os":       _os_fingerprints.get(ip, {}),
+                "geo":      _geo_city_cache.get(ip, {}),
+            })
+        elif path == "/api/status":
+            body = json.dumps({
+                "version":         "2.3.0",
+                "uptime":          time.time(),
+                "packets_total":   STATE.packets_total,
+                "packets_blocked": STATE.packets_blocked,
+                "threats_count":   len(STATE.threats),
+                "blocked_ips":     len(BLOCKED_IPS),
+                "blacklist_size":  len(COMMUNITY_BLACKLIST),
+                "suricata_rules":  SURICATA_LOADED,
+                "honeypot":        HONEYPOT_ENABLED,
+                "demo_mode":       not HAS_SCAPY,
+            })
+        else:
+            body = json.dumps({"error": "Not found", "endpoints": [
+                "/api/state", "/api/threats", "/api/blocked",
+                "/api/history", "/api/summary", "/api/fingerprints",
+                "/api/rate_stats", "/api/ip/<ip>", "/api/status"
+            ]})
+
+        response = f"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n{cors_headers}Content-Length: {len(body.encode())}\r\n\r\n{body}"
+        writer.write(response.encode())
+        await writer.drain()
+    except Exception:
+        pass
+    finally:
+        writer.close()
+
 async def main_async(interface: str):
     threading.Thread(target=start_capture, args=(interface,), daemon=True).start()
     log.info(f"[WS] Serveur WebSocket sur ws://localhost:{CFG.ws_port}")
-    if HAS_WS:
-        try:
-            ver = tuple(int(x) for x in websockets.__version__.split(".")[:2])
-        except Exception:
-            ver = (0, 0)
 
-        if ver >= (14, 0):
-            # websockets 14+ : serve() est un context manager async
-            async with websockets.serve(ws_handler, "localhost", CFG.ws_port):
-                log.info("[WS] Serveur démarré (websockets 14+)")
-                await broadcast_state()
-        else:
-            # websockets < 14 : serve() retourne un objet awaitable
-            server = await websockets.serve(ws_handler, "localhost", CFG.ws_port)
-            log.info("[WS] Serveur démarré (websockets legacy)")
+    # Initialiser les utilisateurs
+    load_users()
+
+    # Démarrage de la blacklist communautaire en arrière-plan
+    threading.Thread(target=update_community_blacklist, daemon=True).start()
+
+    # Générer certificat SSL si pas encore fait
+    has_ssl = generate_self_signed_cert()
+
+    # Serveur d'authentification
+    if has_ssl:
+        try:
+            import ssl as ssl_mod
+            ssl_ctx = ssl_mod.SSLContext(ssl_mod.PROTOCOL_TLS_SERVER)
+            ssl_ctx.load_cert_chain(CERT_FILE, KEY_FILE)
+            auth_srv = await asyncio.start_server(auth_server_handler, "0.0.0.0", 8443, ssl=ssl_ctx)
+            log.info("[AUTH] Serveur HTTPS sur https://localhost:8443")
+            HTTP_PORT = 8443
+        except Exception as e:
+            log.warning(f"[SSL] Erreur SSL: {e} — fallback HTTP")
+            auth_srv = await asyncio.start_server(auth_server_handler, "0.0.0.0", 8080)
+            log.info("[AUTH] Serveur HTTP sur http://localhost:8080")
+            HTTP_PORT = 8080
+    else:
+        auth_srv = await asyncio.start_server(auth_server_handler, "0.0.0.0", 8080)
+        log.info("[AUTH] Serveur HTTP sur http://localhost:8080")
+        HTTP_PORT = 8080
+
+    tasks = []
+    if HAS_WS:
+        ws_server = websockets.serve(ws_handler, "localhost", CFG.ws_port)
+        tasks.append(ws_server)
+
+    # REST API (port 8766)
+    if CFG.__dict__.get("api_enabled", False) or "--api" in sys.argv:
+        log.info("[API] Serveur REST sur http://localhost:8766")
+        api_server = asyncio.start_server(rest_api_handler, "localhost", 8766)
+        tasks.append(api_server)
+
+    if tasks:
+        await asyncio.gather(*[asyncio.ensure_future(s) for s in tasks], return_exceptions=True)
+        log.info("[WS] Serveur démarré — en attente de connexions")
+        async with auth_srv:
             await broadcast_state()
     else:
-        while True:
-            await asyncio.sleep(1)
-            snapshot_traffic()
+        async with auth_srv:
+            while True:
+                await asyncio.sleep(1)
+                snapshot_traffic()
 
 SETTINGS_FILE = "netguard_settings.json"
+USERS_FILE    = "netguard_users.json"
+CERT_FILE     = "netguard_cert.pem"
+KEY_FILE      = "netguard_key.pem"
+
+# ═══════════════════════════════════════════════════════════════════════════
+# v3.0.0 — AUTHENTIFICATION + HTTPS + MULTI-UTILISATEURS
+# ═══════════════════════════════════════════════════════════════════════════
+
+import hashlib
+import secrets
+import base64
+
+# Rôles disponibles
+ROLES = {
+    "admin":    {"label": "Administrateur", "can_block": True,  "can_config": True,  "can_view": True},
+    "operator": {"label": "Opérateur",      "can_block": True,  "can_config": False, "can_view": True},
+    "viewer":   {"label": "Lecteur",        "can_block": False, "can_config": False, "can_view": True},
+}
+
+# Sessions actives: token -> {user, role, expires}
+_sessions: dict = {}
+SESSION_DURATION = 3600 * 8  # 8 heures
+
+def _hash_password(password: str, salt: str = "") -> str:
+    if not salt:
+        salt = secrets.token_hex(16)
+    h = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 100000)
+    return f"{salt}:{base64.b64encode(h).decode()}"
+
+def _verify_password(password: str, stored: str) -> bool:
+    try:
+        salt, _ = stored.split(":", 1)
+        return _hash_password(password, salt) == stored
+    except Exception:
+        return False
+
+def load_users() -> dict:
+    """Charge les utilisateurs depuis le fichier JSON"""
+    if not os.path.exists(USERS_FILE):
+        # Créer l'admin par défaut
+        default_users = {
+            "admin": {
+                "password": _hash_password("netguard2024"),
+                "role":     "admin",
+                "name":     "Administrateur",
+                "created":  datetime.now().isoformat(),
+            }
+        }
+        with open(USERS_FILE, "w") as f:
+            json.dump(default_users, f, indent=2)
+        log.info("[AUTH] Fichier utilisateurs créé — admin/netguard2024")
+        return default_users
+    with open(USERS_FILE, "r") as f:
+        return json.load(f)
+
+def save_users(users: dict):
+    with open(USERS_FILE, "w") as f:
+        json.dump(users, f, indent=2)
+
+def create_session(username: str, role: str) -> str:
+    token = secrets.token_urlsafe(32)
+    _sessions[token] = {
+        "user":    username,
+        "role":    role,
+        "expires": time.time() + SESSION_DURATION,
+    }
+    return token
+
+def verify_session(token: str) -> Optional[dict]:
+    if not token or token not in _sessions:
+        return None
+    session = _sessions[token]
+    if time.time() > session["expires"]:
+        del _sessions[token]
+        return None
+    session["expires"] = time.time() + SESSION_DURATION  # Refresh
+    return session
+
+def cleanup_sessions():
+    expired = [t for t, s in _sessions.items() if time.time() > s["expires"]]
+    for t in expired:
+        del _sessions[t]
+
+def generate_self_signed_cert():
+    """Génère un certificat SSL auto-signé pour HTTPS"""
+    if os.path.exists(CERT_FILE) and os.path.exists(KEY_FILE):
+        return True
+    try:
+        result = subprocess.run([
+            "openssl", "req", "-x509", "-newkey", "rsa:2048",
+            "-keyout", KEY_FILE, "-out", CERT_FILE,
+            "-days", "365", "-nodes",
+            "-subj", "/CN=NetGuard Pro/O=NetGuard/C=CA"
+        ], capture_output=True, timeout=30)
+        if result.returncode == 0:
+            log.info(f"[SSL] Certificat auto-signé généré → {CERT_FILE}")
+            return True
+        else:
+            log.warning("[SSL] openssl non disponible — HTTPS désactivé")
+            return False
+    except Exception as e:
+        log.warning(f"[SSL] Erreur génération certificat: {e}")
+        return False
+
+# ── Serveur HTTP d'authentification (port 8080) ────────────────────────────
+LOGIN_HTML = """<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>NetGuard Pro — Connexion</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#0f0f13;--bg2:#16161d;--bg4:#22222f;--border:#ffffff1a;--text:#e8e8f0;--text2:#9090a8;--blue:#4d9fff;--red:#ff4d6a}
+body{font-family:'Segoe UI',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;display:flex;align-items:center;justify-content:center}
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:36px 40px;width:360px}
+.logo{text-align:center;margin-bottom:28px}
+.logo h1{font-size:22px;font-weight:600}
+.logo h1 span{background:linear-gradient(90deg,#4d9fff,#b47dff);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.logo p{font-size:12px;color:var(--text2);margin-top:4px}
+.field{margin-bottom:16px}
+label{display:block;font-size:12px;color:var(--text2);margin-bottom:6px}
+input{width:100%;background:var(--bg4);border:1px solid var(--border);color:var(--text);padding:10px 14px;border-radius:7px;font-size:14px;outline:none}
+input:focus{border-color:var(--blue)}
+.btn{width:100%;background:var(--blue);color:#fff;border:none;padding:11px;border-radius:7px;font-size:14px;font-weight:500;cursor:pointer;margin-top:8px;transition:.15s}
+.btn:hover{background:#3a8ee8}
+.error{background:#3d1220;border:1px solid #ff4d6a44;color:var(--red);padding:10px 14px;border-radius:6px;font-size:12px;margin-bottom:16px;display:none}
+.footer{text-align:center;font-size:11px;color:var(--text2);margin-top:20px}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">
+    <h1><span>Net</span>Guard Pro</h1>
+    <p>Cybersécurité avancée</p>
+  </div>
+  <div class="error" id="err">Identifiants incorrects</div>
+  <form onsubmit="login(event)">
+    <div class="field">
+      <label>Nom d'utilisateur</label>
+      <input type="text" id="u" placeholder="admin" autocomplete="username" required>
+    </div>
+    <div class="field">
+      <label>Mot de passe</label>
+      <input type="password" id="p" placeholder="••••••••" autocomplete="current-password" required>
+    </div>
+    <button type="submit" class="btn">Se connecter →</button>
+  </form>
+  <div class="footer">NetGuard Pro v3.0 — Accès sécurisé</div>
+</div>
+<script>
+async function login(e) {
+  e.preventDefault();
+  const r = await fetch('/auth/login', {method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({username:document.getElementById('u').value, password:document.getElementById('p').value})});
+  const d = await r.json();
+  if (d.ok) {
+    localStorage.setItem('ng_token', d.token);
+    localStorage.setItem('ng_user', d.user);
+    localStorage.setItem('ng_role', d.role);
+    window.location.href = 'netguard_dashboard.html';
+  } else {
+    document.getElementById('err').style.display = 'block';
+  }
+}
+</script>
+</body>
+</html>"""
+
+async def auth_server_handler(reader, writer):
+    """Serveur HTTP d'authentification sur port 8080"""
+    try:
+        request = await reader.read(4096)
+        req_str = request.decode(errors="ignore")
+        lines   = req_str.split("\r\n")
+        method, path = lines[0].split(" ")[:2] if lines else ("GET", "/")
+
+        cors = "Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type, Authorization\r\n"
+
+        if method == "OPTIONS":
+            writer.write(f"HTTP/1.1 200 OK\r\n{cors}\r\n".encode())
+        elif path == "/auth/login" and method == "POST":
+            body = req_str.split("\r\n\r\n", 1)[-1] if "\r\n\r\n" in req_str else "{}"
+            try:
+                data     = json.loads(body)
+                username = data.get("username", "").strip()
+                password = data.get("password", "")
+                users    = load_users()
+
+                if username in users and _verify_password(password, users[username]["password"]):
+                    role  = users[username].get("role", "viewer")
+                    token = create_session(username, role)
+                    log.info(f"[AUTH] Connexion réussie: {username} ({role})")
+                    audit_log(username, "LOGIN", "", f"Rôle: {role}", "")
+                    resp  = json.dumps({"ok": True, "token": token, "user": username, "role": role, "name": users[username].get("name","")})
+                else:
+                    log.warning(f"[AUTH] Échec connexion: {username}")
+                    resp  = json.dumps({"ok": False, "error": "Identifiants incorrects"})
+            except Exception as e:
+                resp = json.dumps({"ok": False, "error": str(e)})
+            writer.write(f"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n{cors}Content-Length: {len(resp.encode())}\r\n\r\n{resp}".encode())
+
+        elif path == "/auth/logout" and method == "POST":
+            body = req_str.split("\r\n\r\n", 1)[-1] if "\r\n\r\n" in req_str else "{}"
+            try:
+                token = json.loads(body).get("token","")
+                if token in _sessions:
+                    del _sessions[token]
+            except Exception:
+                pass
+            resp = json.dumps({"ok": True})
+            writer.write(f"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n{cors}Content-Length: {len(resp.encode())}\r\n\r\n{resp}".encode())
+
+        elif path == "/auth/verify" and method == "POST":
+            body = req_str.split("\r\n\r\n", 1)[-1] if "\r\n\r\n" in req_str else "{}"
+            try:
+                token   = json.loads(body).get("token","")
+                session = verify_session(token)
+                resp    = json.dumps({"ok": bool(session), **(session or {})})
+            except Exception:
+                resp = json.dumps({"ok": False})
+            writer.write(f"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n{cors}Content-Length: {len(resp.encode())}\r\n\r\n{resp}".encode())
+
+        elif path == "/auth/users" and method == "GET":
+            # Lister les utilisateurs (admin seulement — vérifié côté client)
+            users = load_users()
+            safe  = {u: {"role": d["role"], "name": d.get("name",""), "created": d.get("created","")} for u, d in users.items()}
+            resp  = json.dumps(safe)
+            writer.write(f"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n{cors}Content-Length: {len(resp.encode())}\r\n\r\n{resp}".encode())
+
+        elif path == "/auth/users" and method == "POST":
+            # Créer/modifier un utilisateur
+            body = req_str.split("\r\n\r\n", 1)[-1] if "\r\n\r\n" in req_str else "{}"
+            try:
+                data  = json.loads(body)
+                users = load_users()
+                uname = data.get("username","").strip()
+                if uname and data.get("password") and data.get("role") in ROLES:
+                    users[uname] = {
+                        "password": _hash_password(data["password"]),
+                        "role":     data["role"],
+                        "name":     data.get("name", uname),
+                        "created":  datetime.now().isoformat(),
+                    }
+                    save_users(users)
+                    log.info(f"[AUTH] Utilisateur créé/modifié: {uname} ({data['role']})")
+                    resp = json.dumps({"ok": True})
+                else:
+                    resp = json.dumps({"ok": False, "error": "Données invalides"})
+            except Exception as e:
+                resp = json.dumps({"ok": False, "error": str(e)})
+            writer.write(f"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n{cors}Content-Length: {len(resp.encode())}\r\n\r\n{resp}".encode())
+
+        elif path == "/auth/users/delete" and method == "POST":
+            body = req_str.split("\r\n\r\n", 1)[-1] if "\r\n\r\n" in req_str else "{}"
+            try:
+                uname = json.loads(body).get("username","")
+                users = load_users()
+                if uname in users and uname != "admin":
+                    del users[uname]
+                    save_users(users)
+                    resp = json.dumps({"ok": True})
+                else:
+                    resp = json.dumps({"ok": False, "error": "Impossible de supprimer l'admin"})
+            except Exception as e:
+                resp = json.dumps({"ok": False, "error": str(e)})
+            writer.write(f"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n{cors}Content-Length: {len(resp.encode())}\r\n\r\n{resp}".encode())
+
+        elif path == "/auth/change-password" and method == "POST":
+            body = req_str.split("\r\n\r\n", 1)[-1] if "\r\n\r\n" in req_str else "{}"
+            try:
+                data        = json.loads(body)
+                token       = data.get("token", "")
+                old_pw      = data.get("old_password", "")
+                new_pw      = data.get("new_password", "")
+                session     = verify_session(token)
+                if not session:
+                    resp = json.dumps({"ok": False, "error": "Session invalide"})
+                elif len(new_pw) < 8:
+                    resp = json.dumps({"ok": False, "error": "Mot de passe trop court (8 caractères minimum)"})
+                else:
+                    users    = load_users()
+                    username = session["user"]
+                    if _verify_password(old_pw, users[username]["password"]):
+                        users[username]["password"] = _hash_password(new_pw)
+                        save_users(users)
+                        log.info(f"[AUTH] Mot de passe changé: {username}")
+                        resp = json.dumps({"ok": True})
+                    else:
+                        resp = json.dumps({"ok": False, "error": "Ancien mot de passe incorrect"})
+            except Exception as e:
+                resp = json.dumps({"ok": False, "error": str(e)})
+            writer.write(f"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n{cors}Content-Length: {len(resp.encode())}\r\n\r\n{resp}".encode())
+
+        elif path == "/" or path == "/login":
+            writer.write(f"HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n{cors}Content-Length: {len(LOGIN_HTML.encode())}\r\n\r\n{LOGIN_HTML}".encode())
+
+        else:
+            body = json.dumps({"error": "Not found"})
+            writer.write(f"HTTP/1.1 404 Not Found\r\nContent-Type: application/json\r\n{cors}Content-Length: {len(body.encode())}\r\n\r\n{body}".encode())
+
+        await writer.drain()
+    except Exception as e:
+        log.debug(f"[AUTH] Erreur requête: {e}")
+    finally:
+        writer.close()
+HISTORY_FILE  = "netguard_history.json"
+AUDIT_FILE    = "netguard_audit.log"
+
+def audit_log(user: str, action: str, target: str = "", details: str = "", ip: str = ""):
+    """Enregistre une action dans le log d'audit"""
+    entry = {
+        "ts":      datetime.now().isoformat(),
+        "user":    user,
+        "action":  action,
+        "target":  target,
+        "details": details,
+        "ip":      ip,
+    }
+    try:
+        with open(AUDIT_FILE, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except Exception as e:
+        log.error(f"[AUDIT] Erreur écriture: {e}")
+    log.info(f"[AUDIT] {user} — {action} {target}")
+
+def audit_get(limit: int = 200) -> list:
+    """Retourne les dernières entrées du log d'audit"""
+    if not os.path.exists(AUDIT_FILE):
+        return []
+    try:
+        with open(AUDIT_FILE, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+        entries = []
+        for line in lines[-limit:]:
+            try:
+                entries.append(json.loads(line.strip()))
+            except Exception:
+                pass
+        return list(reversed(entries))
+    except Exception:
+        return []
+
+# ═══════════════════════════════════════════════════════════════════════════
+# BACKUP AUTOMATIQUE
+# ═══════════════════════════════════════════════════════════════════════════
+
+BACKUP_DIR = "backups"
+_last_backup: float = 0
+BACKUP_INTERVAL = 3600 * 24  # 24 heures
+
+def run_backup():
+    """Sauvegarde automatique des données importantes"""
+    global _last_backup
+    if time.time() - _last_backup < BACKUP_INTERVAL:
+        return
+    try:
+        import zipfile
+        os.makedirs(BACKUP_DIR, exist_ok=True)
+        ts       = datetime.now().strftime("%Y%m%d_%H%M%S")
+        zip_path = os.path.join(BACKUP_DIR, f"netguard_backup_{ts}.zip")
+        files_to_backup = [
+            SETTINGS_FILE, HISTORY_FILE, USERS_FILE,
+            AUDIT_FILE, "netguard_cert.pem",
+        ]
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            for f in files_to_backup:
+                if os.path.exists(f):
+                    zf.write(f)
+        # Garder seulement les 7 derniers backups
+        backups = sorted([
+            os.path.join(BACKUP_DIR, f)
+            for f in os.listdir(BACKUP_DIR)
+            if f.startswith("netguard_backup_") and f.endswith(".zip")
+        ])
+        for old in backups[:-7]:
+            os.remove(old)
+        _last_backup = time.time()
+        log.info(f"[BACKUP] Sauvegarde créée → {zip_path}")
+        audit_log("système", "BACKUP", zip_path, f"{len(files_to_backup)} fichiers")
+    except Exception as e:
+        log.error(f"[BACKUP] Erreur: {e}")
+
+# ─── Historique persistant ─────────────────────────────────────────────────
+def history_append(threat: dict):
+    """Ajoute une menace à l'historique persistant"""
+    try:
+        history = []
+        if os.path.exists(HISTORY_FILE):
+            with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+                history = json.load(f)
+        history.append({
+            "ts":       threat.get("timestamp", datetime.now().isoformat()),
+            "type":     threat.get("type", ""),
+            "ip":       threat.get("src_ip", ""),
+            "country":  threat.get("country", ""),
+            "severity": threat.get("severity", ""),
+            "desc":     threat.get("description", ""),
+            "blocked":  threat.get("blocked", False),
+        })
+        with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+            json.dump(history, f, ensure_ascii=False)
+    except Exception as e:
+        log.error(f"[HISTORY] Erreur sauvegarde: {e}")
+
+def history_get(period: str = "all") -> list:
+    """Retourne l'historique filtré par période"""
+    if not os.path.exists(HISTORY_FILE):
+        return []
+    try:
+        with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+            history = json.load(f)
+        if period == "all":
+            return history
+        now = datetime.now()
+        cutoffs = {
+            "hour":  now - __import__("datetime").timedelta(hours=1),
+            "day":   now - __import__("datetime").timedelta(days=1),
+            "week":  now - __import__("datetime").timedelta(weeks=1),
+            "month": now - __import__("datetime").timedelta(days=30),
+            "year":  now - __import__("datetime").timedelta(days=365),
+        }
+        from datetime import timedelta
+        cutoff_map = {
+            "hour":  datetime.now() - timedelta(hours=1),
+            "day":   datetime.now() - timedelta(days=1),
+            "week":  datetime.now() - timedelta(weeks=1),
+            "month": datetime.now() - timedelta(days=30),
+            "year":  datetime.now() - timedelta(days=365),
+        }
+        cutoff = cutoff_map.get(period)
+        if not cutoff:
+            return history
+        return [h for h in history if h.get("ts","") >= cutoff.isoformat()]
+    except Exception:
+        return []
+
+def history_clear(period: str = "all"):
+    """Efface l'historique (tout ou par période)"""
+    if period == "all" or not os.path.exists(HISTORY_FILE):
+        with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+            json.dump([], f)
+        log.info("[HISTORY] Historique effacé complètement")
+        return
+    try:
+        from datetime import timedelta
+        cutoff_map = {
+            "hour":  datetime.now() - timedelta(hours=1),
+            "day":   datetime.now() - timedelta(days=1),
+            "week":  datetime.now() - timedelta(weeks=1),
+            "month": datetime.now() - timedelta(days=30),
+        }
+        cutoff = cutoff_map.get(period)
+        with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+            history = json.load(f)
+        kept = [h for h in history if cutoff and h.get("ts","") < cutoff.isoformat()]
+        with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+            json.dump(kept, f, ensure_ascii=False)
+        log.info(f"[HISTORY] Effacé période {period} — {len(history)-len(kept)} entrées supprimées")
+    except Exception as e:
+        log.error(f"[HISTORY] Erreur effacement: {e}")
+
+def history_summary(period: str = "week") -> dict:
+    """Génère un résumé analytique pour la période donnée"""
+    data = history_get(period)
+    if not data:
+        return {"period": period, "total": 0, "by_type": {}, "by_country": {}, "by_severity": {}, "by_day": {}, "top_ips": {}}
+
+    by_type     = {}
+    by_country  = {}
+    by_severity = {}
+    by_day      = {}
+    by_ip       = {}
+
+    for h in data:
+        t  = h.get("type","Autre")
+        c  = h.get("country","?")
+        s  = h.get("severity","low")
+        ip = h.get("ip","")
+        d  = h.get("ts","")[:10]
+
+        by_type[t]        = by_type.get(t, 0) + 1
+        by_country[c]     = by_country.get(c, 0) + 1
+        by_severity[s]    = by_severity.get(s, 0) + 1
+        by_day[d]         = by_day.get(d, 0) + 1
+        if ip: by_ip[ip]  = by_ip.get(ip, 0) + 1
+
+    top_ips = dict(sorted(by_ip.items(), key=lambda x: -x[1])[:10])
+
+    return {
+        "period":      period,
+        "total":       len(data),
+        "blocked":     sum(1 for h in data if h.get("blocked")),
+        "by_type":     dict(sorted(by_type.items(),    key=lambda x: -x[1])[:10]),
+        "by_country":  dict(sorted(by_country.items(), key=lambda x: -x[1])[:12]),
+        "by_severity": by_severity,
+        "by_day":      dict(sorted(by_day.items())),
+        "top_ips":     top_ips,
+    }
+
+# ═══════════════════════════════════════════════════════════════════════════
+# v2.1.0 — ALERTES EMAIL + NOTIFICATIONS WINDOWS
+# ═══════════════════════════════════════════════════════════════════════════
+
+@dataclass
+class AlertConfig:
+    email_enabled:    bool  = False
+    email_from:       str   = ""
+    email_to:         str   = ""
+    email_smtp:       str   = "smtp.gmail.com"
+    email_port:       int   = 587
+    email_password:   str   = ""
+    email_min_sev:    str   = "high"     # critical, high, med
+    toast_enabled:    bool  = True
+    toast_min_sev:    str   = "high"
+    alert_cooldown:   int   = 60         # secondes entre 2 alertes pour la même IP
+
+ALERT_CFG = AlertConfig()
+_alert_last_sent: dict = {}  # ip -> timestamp dernière alerte
+
+def _should_alert(ip: str, severity: str, min_sev: str) -> bool:
+    """Vérifie si on doit envoyer une alerte (cooldown + sévérité)"""
+    sev_order = {"critical": 4, "high": 3, "med": 2, "medium": 2, "low": 1}
+    if sev_order.get(severity, 0) < sev_order.get(min_sev, 3):
+        return False
+    last = _alert_last_sent.get(ip, 0)
+    if time.time() - last < ALERT_CFG.alert_cooldown:
+        return False
+    _alert_last_sent[ip] = time.time()
+    return True
+
+def send_alert(threat: dict):
+    """Point d'entrée principal — envoie email + toast si configuré"""
+    ip       = threat.get("src_ip", "?")
+    severity = threat.get("severity", "low")
+    ttype    = threat.get("type", "Menace")
+    desc     = threat.get("description", "")
+    country  = threat.get("country", "")
+    ts       = threat.get("timestamp", datetime.now().isoformat())[:19].replace("T", " ")
+
+    # Toast Windows (non bloquant)
+    if ALERT_CFG.toast_enabled and _should_alert(ip + "_toast", severity, ALERT_CFG.toast_min_sev):
+        threading.Thread(
+            target=_send_toast,
+            args=(ip, severity, ttype, country),
+            daemon=True
+        ).start()
+
+    # Email (non bloquant)
+    if ALERT_CFG.email_enabled and ALERT_CFG.email_to and _should_alert(ip + "_email", severity, ALERT_CFG.email_min_sev):
+        threading.Thread(
+            target=_send_email_alert,
+            args=(ip, severity, ttype, desc, country, ts),
+            daemon=True
+        ).start()
+
+def _send_toast(ip: str, severity: str, ttype: str, country: str):
+    """Notification Windows toast via PowerShell"""
+    if os.name != "nt":
+        return
+    try:
+        flags = {
+            "critical": "🚨 CRITIQUE",
+            "high":     "⚠️ ÉLEVÉ",
+            "med":      "⚡ MOYEN",
+            "medium":   "⚡ MOYEN",
+            "low":      "ℹ️ INFO",
+        }
+        flag = flags.get(severity, "⚠️")
+        title = f"NetGuard Pro — {flag}"
+        body  = f"{ttype}\nIP: {ip} {country}"
+
+        ps_script = f"""
+Add-Type -AssemblyName System.Windows.Forms
+$notify = New-Object System.Windows.Forms.NotifyIcon
+$notify.Icon = [System.Drawing.SystemIcons]::Shield
+$notify.BalloonTipIcon = [System.Windows.Forms.ToolTipIcon]::Warning
+$notify.BalloonTipTitle = "{title}"
+$notify.BalloonTipText = "{body}"
+$notify.Visible = $True
+$notify.ShowBalloonTip(5000)
+Start-Sleep -Seconds 6
+$notify.Dispose()
+"""
+        subprocess.Popen(
+            ["powershell", "-WindowStyle", "Hidden", "-Command", ps_script],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+        )
+        log.info(f"[TOAST] Notification envoyée: {ttype} — {ip}")
+    except Exception as e:
+        log.error(f"[TOAST] Erreur: {e}")
+
+def _send_email_alert(ip: str, severity: str, ttype: str, desc: str, country: str, ts: str):
+    """Envoie un email d'alerte via SMTP"""
+    try:
+        import smtplib
+        from email.mime.text import MIMEText
+        from email.mime.multipart import MIMEMultipart
+
+        sev_emoji = {"critical":"🚨","high":"⚠️","med":"⚡","medium":"⚡","low":"ℹ️"}
+        emoji = sev_emoji.get(severity, "⚠️")
+
+        subject = f"{emoji} NetGuard Pro — {severity.upper()} — {ttype}"
+
+        html = f"""
+<html><body style="font-family:Arial,sans-serif;background:#0f0f13;color:#e8e8f0;padding:20px">
+<div style="max-width:500px;margin:0 auto;background:#16161d;border-radius:10px;overflow:hidden">
+  <div style="background:{'#3d1220' if severity in ('critical','high') else '#3d2800'};padding:16px 20px">
+    <h2 style="margin:0;color:{'#ff4d6a' if severity in ('critical','high') else '#ffb347'}">{emoji} NetGuard Pro — Alerte {severity.upper()}</h2>
+  </div>
+  <div style="padding:20px">
+    <table style="width:100%;border-collapse:collapse">
+      <tr><td style="padding:8px 0;color:#9090a8;width:140px">Type d'attaque</td><td style="color:#e8e8f0;font-weight:600">{ttype}</td></tr>
+      <tr><td style="padding:8px 0;color:#9090a8">IP source</td><td style="color:#4d9fff;font-family:monospace;font-size:14px">{ip}</td></tr>
+      <tr><td style="padding:8px 0;color:#9090a8">Pays</td><td style="color:#e8e8f0">{country or 'Inconnu'}</td></tr>
+      <tr><td style="padding:8px 0;color:#9090a8">Description</td><td style="color:#e8e8f0">{desc}</td></tr>
+      <tr><td style="padding:8px 0;color:#9090a8">Heure</td><td style="color:#e8e8f0;font-family:monospace">{ts}</td></tr>
+      <tr><td style="padding:8px 0;color:#9090a8">Statut</td><td style="color:#ff4d6a;font-weight:600">{'🚫 IP bloquée' if ip in BLOCKED_IPS else '⚡ Détectée'}</td></tr>
+    </table>
+  </div>
+  <div style="padding:12px 20px;background:#0f0f13;font-size:11px;color:#5a5a72">
+    NetGuard Pro v2.1.0 — Ouvre le dashboard: netguard_dashboard.html
+  </div>
+</div>
+</body></html>"""
+
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"]    = ALERT_CFG.email_from or f"netguard@localhost"
+        msg["To"]      = ALERT_CFG.email_to
+        msg.attach(MIMEText(f"{ttype}\nIP: {ip}\nPays: {country}\n{desc}\nHeure: {ts}", "plain"))
+        msg.attach(MIMEText(html, "html"))
+
+        with smtplib.SMTP(ALERT_CFG.email_smtp, ALERT_CFG.email_port, timeout=10) as server:
+            server.ehlo()
+            server.starttls()
+            server.login(ALERT_CFG.email_from, ALERT_CFG.email_password)
+            server.sendmail(ALERT_CFG.email_from, ALERT_CFG.email_to, msg.as_string())
+
+        log.info(f"[EMAIL] Alerte envoyée à {ALERT_CFG.email_to}: {ttype} — {ip}")
+    except Exception as e:
+        log.error(f"[EMAIL] Erreur envoi: {e}")
 
 def save_settings():
     """Sauvegarde les settings dans un fichier JSON"""
@@ -1732,6 +2760,15 @@ def save_settings():
             "dpi_enabled": CFG.dpi_enabled,
             "dpi_mask_sensitive": CFG.dpi_mask_sensitive,
             "suricata_enabled": SURICATA_ENABLED,
+            "alert_email_enabled":  ALERT_CFG.email_enabled,
+            "alert_email_from":     ALERT_CFG.email_from,
+            "alert_email_to":       ALERT_CFG.email_to,
+            "alert_email_smtp":     ALERT_CFG.email_smtp,
+            "alert_email_port":     ALERT_CFG.email_port,
+            "alert_email_min_sev":  ALERT_CFG.email_min_sev,
+            "alert_toast_enabled":  ALERT_CFG.toast_enabled,
+            "alert_toast_min_sev":  ALERT_CFG.toast_min_sev,
+            "alert_cooldown":       ALERT_CFG.alert_cooldown,
             "detection_params": {
                 k: DETECTION_PARAMS[k]["value"]
                 for k in DETECTION_PARAMS
@@ -1772,6 +2809,17 @@ def load_settings():
         CFG.dpi_mask_sensitive  = s.get("dpi_mask_sensitive", True)
         SURICATA_ENABLED        = s.get("suricata_enabled", True)
 
+        # Alertes
+        ALERT_CFG.email_enabled  = s.get("alert_email_enabled", False)
+        ALERT_CFG.email_from     = s.get("alert_email_from", "")
+        ALERT_CFG.email_to       = s.get("alert_email_to", "")
+        ALERT_CFG.email_smtp     = s.get("alert_email_smtp", "smtp.gmail.com")
+        ALERT_CFG.email_port     = s.get("alert_email_port", 587)
+        ALERT_CFG.email_min_sev  = s.get("alert_email_min_sev", "high")
+        ALERT_CFG.toast_enabled  = s.get("alert_toast_enabled", True)
+        ALERT_CFG.toast_min_sev  = s.get("alert_toast_min_sev", "high")
+        ALERT_CFG.alert_cooldown = s.get("alert_cooldown", 60)
+
         log.info(f"[SETTINGS] Chargé — {len(BLOCKED_IPS)} IPs bloquées, {len(GEO_BLOCKED_COUNTRIES)} pays géobloqués")
     except Exception as e:
         log.error(f"[SETTINGS] Erreur chargement: {e}")
@@ -1782,6 +2830,8 @@ def main():
     parser.add_argument("--port",      type=int, default=8765)
     parser.add_argument("--no-block",  action="store_true")
     parser.add_argument("--demo",      action="store_true")
+    parser.add_argument("--api",       action="store_true", help="Activer l'API REST sur port 8766")
+    parser.add_argument("--kiosk",     action="store_true", help="Ouvrir le dashboard en mode plein écran")
     args = parser.parse_args()
 
     CFG.ws_port   = args.port
@@ -1790,6 +2840,25 @@ def main():
     if args.demo:
         global HAS_SCAPY
         HAS_SCAPY = False
+
+    # Mode kiosk — ouvre le dashboard en plein écran
+    if args.kiosk:
+        dashboard = os.path.join(os.path.dirname(os.path.abspath(__file__)), "netguard_dashboard.html")
+        try:
+            if platform.system() == "Windows":
+                subprocess.Popen([
+                    "cmd", "/c", "start", "/max", "msedge",
+                    "--kiosk", f"file:///{dashboard}",
+                    "--edge-kiosk-type=fullscreen"
+                ])
+            else:
+                subprocess.Popen(["chromium-browser", "--kiosk", f"file://{dashboard}"])
+            log.info("[KIOSK] Dashboard ouvert en mode plein écran")
+        except Exception as e:
+            log.warning(f"[KIOSK] Impossible d'ouvrir le navigateur: {e}")
+
+    if args.api:
+        log.info("[API] REST API activée sur http://localhost:8766")
 
     interface = args.interface
     if interface == "auto":

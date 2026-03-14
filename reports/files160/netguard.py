@@ -869,19 +869,6 @@ def analyze_packet(pkt):
             decision = "block"
             reason   = f"Port {dst_port} toujours bloqué"
 
-        # ── DNS Blackhole ───────────────────────────────────────────────
-        if RULES.get("detect_malicious_dns", {}).get("enabled", True) and pkt.haslayer("DNS"):
-            try:
-                from scapy.layers.dns import DNS, DNSQR
-                if pkt[DNS].qr == 0 and pkt.haslayer(DNSQR):
-                    queried = pkt[DNSQR].qname.decode(errors="replace").rstrip(".")
-                    if dns_blackhole_check(queried):
-                        decision = "block"
-                        reason   = f"DNS Blackhole: {queried}"
-                        add_threat(src_ip, "DNS Blackhole", f"Requête vers domaine bloqué: {queried}", "high")
-            except Exception:
-                pass
-
         # ── Géoblocage
         if GEO_BLOCKED_COUNTRIES and not is_private(src_ip):
             country = get_country(src_ip)
@@ -1110,249 +1097,9 @@ def build_state_message() -> dict:
                     key=lambda x: -sum(x[1].values()))[:15]
             },
             "timeline": list(STATE.timeline_events)[:100],
-            # v2.0.0
-            "honeypot_enabled": HONEYPOT_ENABLED,
-            "honeypot_hits":    HONEYPOT_HITS[-20:],
-            "dns_blackhole_count": len(DNS_BLACKHOLE),
-            "dns_blackhole_hits":  sum(DNS_BLACKHOLE_HITS.values()),
-            "lan_devices":      LAN_DEVICES,
         }
 
-# ═══════════════════════════════════════════════════════════════════════════
-# v2.0.0 — DÉFENSE ACTIVE
-# ═══════════════════════════════════════════════════════════════════════════
-
-# ─── DNS Blackhole ─────────────────────────────────────────────────────────
-DNS_BLACKHOLE: set = set()  # domaines bloqués
-DNS_BLACKHOLE_HITS: dict = {}  # domaine -> hits
-
-DEFAULT_BLACKHOLE_DOMAINS = [
-    # Malware C2
-    "emotet.com","trickbot.com","cobaltrike.com","metasploit.com",
-    # Trackers publicitaires connus
-    "doubleclick.net","googlesyndication.com","adnxs.com","scorecardresearch.com",
-    # Phishing connus
-    "phishing.example.com",
-    # Cryptomining
-    "coinhive.com","coin-hive.com","crypto-loot.com","minero.cc",
-    # Telemetry Windows (optionnel)
-    "telemetry.microsoft.com","vortex.data.microsoft.com",
-]
-
-def dns_blackhole_check(domain: str) -> bool:
-    """Vérifie si un domaine est dans la blacklist DNS"""
-    if not domain:
-        return False
-    domain = domain.lower().rstrip(".")
-    # Check exact + parent domains
-    for blocked in DNS_BLACKHOLE:
-        if domain == blocked or domain.endswith("." + blocked):
-            DNS_BLACKHOLE_HITS[blocked] = DNS_BLACKHOLE_HITS.get(blocked, 0) + 1
-            return True
-    return False
-
-def dns_blackhole_add(domains: list):
-    """Ajoute des domaines à la blacklist"""
-    for d in domains:
-        d = d.lower().strip().rstrip(".")
-        if d:
-            DNS_BLACKHOLE.add(d)
-    log.info(f"[DNS-BH] {len(DNS_BLACKHOLE)} domaines dans la blacklist")
-
-def dns_blackhole_remove(domain: str):
-    DNS_BLACKHOLE.discard(domain.lower().strip())
-
-# Init avec les domaines par défaut
-dns_blackhole_add(DEFAULT_BLACKHOLE_DOMAINS)
-
-# ─── Scan LAN ──────────────────────────────────────────────────────────────
-LAN_DEVICES: list = []
-LAN_SCAN_RUNNING: bool = False
-
-def _get_local_subnet() -> str:
-    """Détecte automatiquement le sous-réseau local"""
-    try:
-        import socket
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        local_ip = s.getsockname()[0]
-        s.close()
-        parts = local_ip.split(".")
-        return f"{parts[0]}.{parts[1]}.{parts[2]}.0/24"
-    except Exception:
-        return "192.168.1.0/24"
-
-def scan_lan() -> list:
-    """Scanne le réseau local et retourne les appareils trouvés"""
-    global LAN_SCAN_RUNNING, LAN_DEVICES
-    if LAN_SCAN_RUNNING:
-        return LAN_DEVICES
-    LAN_SCAN_RUNNING = True
-    devices = []
-    try:
-        import socket
-        import struct
-        import subprocess
-
-        subnet = _get_local_subnet()
-        log.info(f"[LAN] Scan du sous-réseau: {subnet}")
-
-        # Méthode 1 : ARP scan via scapy
-        if HAS_SCAPY:
-            try:
-                from scapy.layers.l2 import ARP, Ether
-                from scapy.sendrecv import srp
-                arp = ARP(pdst=subnet)
-                ether = Ether(dst="ff:ff:ff:ff:ff:ff")
-                packet = ether/arp
-                result = srp(packet, timeout=3, verbose=False)[0]
-                for sent, received in result:
-                    hostname = ""
-                    try:
-                        hostname = socket.gethostbyaddr(received.psrc)[0]
-                    except Exception:
-                        pass
-                    devices.append({
-                        "ip":       received.psrc,
-                        "mac":      received.hwsrc,
-                        "hostname": hostname,
-                        "vendor":   _mac_vendor(received.hwsrc),
-                        "status":   "up",
-                        "open_ports": [],
-                    })
-            except Exception as e:
-                log.warning(f"[LAN] ARP scan failed: {e}")
-
-        # Méthode 2 : ping sweep si scapy ne fonctionne pas
-        if not devices:
-            base = subnet.rsplit(".", 1)[0]
-            import concurrent.futures
-            def ping_host(i):
-                ip = f"{base}.{i}"
-                try:
-                    result = subprocess.run(
-                        ["ping", "-n", "1", "-w", "200", ip] if os.name == "nt"
-                        else ["ping", "-c", "1", "-W", "1", ip],
-                        capture_output=True, timeout=2
-                    )
-                    if result.returncode == 0:
-                        hostname = ""
-                        try:
-                            hostname = socket.gethostbyaddr(ip)[0]
-                        except Exception:
-                            pass
-                        return {"ip": ip, "mac": "—", "hostname": hostname, "vendor": "—", "status": "up", "open_ports": []}
-                except Exception:
-                    pass
-                return None
-            with concurrent.futures.ThreadPoolExecutor(max_workers=50) as ex:
-                results = list(ex.map(ping_host, range(1, 255)))
-            devices = [r for r in results if r]
-
-        LAN_DEVICES = devices
-        log.info(f"[LAN] {len(devices)} appareils trouvés")
-
-    except Exception as e:
-        log.error(f"[LAN] Erreur scan: {e}")
-    finally:
-        LAN_SCAN_RUNNING = False
-
-    return devices
-
-def _mac_vendor(mac: str) -> str:
-    """Identifie le fabricant via les 3 premiers octets du MAC"""
-    vendors = {
-        "00:50:56": "VMware", "00:0c:29": "VMware", "00:15:5d": "Hyper-V",
-        "08:00:27": "VirtualBox", "52:54:00": "QEMU/KVM",
-        "b8:27:eb": "Raspberry Pi", "dc:a6:32": "Raspberry Pi", "e4:5f:01": "Raspberry Pi",
-        "00:1a:11": "Google", "f4:f5:d8": "Google",
-        "ac:bc:32": "Apple", "3c:22:fb": "Apple", "a4:c3:f0": "Apple",
-        "00:50:f2": "Microsoft", "28:18:78": "Microsoft",
-        "00:1b:21": "Intel", "8c:ec:4b": "Intel",
-        "14:59:c0": "Cisco", "00:1e:bd": "Cisco",
-    }
-    prefix = mac[:8].lower()
-    for k, v in vendors.items():
-        if mac.lower().startswith(k.lower()):
-            return v
-    return "Inconnu"
-
-# ─── Honeypot ──────────────────────────────────────────────────────────────
-HONEYPOT_ENABLED: bool = False
-HONEYPOT_HITS: list = []
-HONEYPOT_SERVERS: list = []
-
-class HoneypotServer:
-    """Faux service qui logue toutes les connexions"""
-    def __init__(self, port: int, service_name: str, banner: str):
-        self.port = port
-        self.service_name = service_name
-        self.banner = banner.encode() + b"\r\n"
-        self.server = None
-        self.running = False
-
-    async def handle_client(self, reader, writer):
-        ip = writer.get_extra_info('peername')[0]
-        log.warning(f"[HONEYPOT] {self.service_name}:{self.port} — connexion de {ip}")
-
-        # Log l'intrusion
-        hit = {
-            "ts":      datetime.now().strftime("%H:%M:%S"),
-            "ip":      ip,
-            "port":    self.port,
-            "service": self.service_name,
-            "country": get_country(ip) or "?",
-        }
-        HONEYPOT_HITS.append(hit)
-        if len(HONEYPOT_HITS) > 200:
-            HONEYPOT_HITS.pop(0)
-
-        # Ajouter comme menace
-        add_threat(ip, f"Honeypot {self.service_name}", f"Connexion sur faux service port {self.port}", "high")
-        auto_block_check(ip)
-
-        try:
-            writer.write(self.banner)
-            await writer.drain()
-            # Lire un peu de données (credentials tentés)
-            try:
-                data = await asyncio.wait_for(reader.read(256), timeout=5)
-                if data:
-                    hit["data"] = data.decode(errors="replace")[:100]
-                    log.warning(f"[HONEYPOT] Données reçues de {ip}: {hit['data'][:50]}")
-            except asyncio.TimeoutError:
-                pass
-        except Exception:
-            pass
-        finally:
-            writer.close()
-
-    async def start(self):
-        try:
-            self.server = await asyncio.start_server(self.handle_client, "0.0.0.0", self.port)
-            self.running = True
-            log.info(f"[HONEYPOT] {self.service_name} sur port {self.port}")
-            async with self.server:
-                await self.server.serve_forever()
-        except Exception as e:
-            log.error(f"[HONEYPOT] Erreur port {self.port}: {e}")
-
-HONEYPOT_CONFIGS = [
-    (22,   "SSH",   "SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.6"),
-    (23,   "Telnet","Welcome to Ubuntu 22.04 LTS"),
-    (21,   "FTP",   "220 FTP server ready"),
-    (3389, "RDP",   "\x03\x00\x00\x13\x0e\xd0\x00\x00\x124\x00\x02\x00\x08\x00\x02\x00\x00\x00"),
-    (8080, "HTTP",  "HTTP/1.1 200 OK\r\nServer: Apache/2.4.41\r\nContent-Type: text/html\r\n\r\n<html><body>Welcome</body></html>"),
-]
-
-async def start_honeypots():
-    global HONEYPOT_SERVERS
-    HONEYPOT_SERVERS = []
-    for port, name, banner in HONEYPOT_CONFIGS:
-        hp = HoneypotServer(port, name, banner)
-        HONEYPOT_SERVERS.append(hp)
-        asyncio.create_task(hp.start())
-    log.info(f"[HONEYPOT] {len(HONEYPOT_SERVERS)} services honeypot démarrés")
+async def ws_handler(websocket):
     global CLIENTS
     CLIENTS.add(websocket)
     log.info(f"[WS] Client connecté: {websocket.remote_address}")
@@ -1474,43 +1221,6 @@ async def handle_ws_command(ws, msg: dict):
         await ws.send(json.dumps({"type": "geo_updated", "countries": list(GEO_BLOCKED_COUNTRIES)}))
         save_settings()
 
-    # ── DNS Blackhole ──────────────────────────────────────────────────────
-    elif cmd == "dns_blackhole_add":
-        domains = msg.get("domains", [])
-        if isinstance(domains, str):
-            domains = [d.strip() for d in domains.replace(",","\n").splitlines() if d.strip()]
-        dns_blackhole_add(domains)
-        await ws.send(json.dumps({"type":"dns_blackhole_updated","domains":list(DNS_BLACKHOLE),"hits":DNS_BLACKHOLE_HITS}))
-
-    elif cmd == "dns_blackhole_remove":
-        dns_blackhole_remove(msg.get("domain",""))
-        await ws.send(json.dumps({"type":"dns_blackhole_updated","domains":list(DNS_BLACKHOLE),"hits":DNS_BLACKHOLE_HITS}))
-
-    elif cmd == "dns_blackhole_get":
-        await ws.send(json.dumps({"type":"dns_blackhole_updated","domains":sorted(DNS_BLACKHOLE),"hits":DNS_BLACKHOLE_HITS}))
-
-    # ── Scan LAN ───────────────────────────────────────────────────────────
-    elif cmd == "scan_lan":
-        await ws.send(json.dumps({"type":"lan_scan_started","subnet":_get_local_subnet()}))
-        def _do_scan():
-            devices = scan_lan()
-            asyncio.run_coroutine_threadsafe(
-                ws.send(json.dumps({"type":"lan_scan_result","devices":devices,"count":len(devices)})),
-                asyncio.get_event_loop()
-            )
-        threading.Thread(target=_do_scan, daemon=True).start()
-
-    # ── Honeypot ───────────────────────────────────────────────────────────
-    elif cmd == "toggle_honeypot":
-        global HONEYPOT_ENABLED
-        HONEYPOT_ENABLED = not HONEYPOT_ENABLED
-        if HONEYPOT_ENABLED and not HONEYPOT_SERVERS:
-            asyncio.create_task(start_honeypots())
-        await ws.send(json.dumps({"type":"honeypot_toggled","enabled":HONEYPOT_ENABLED,"ports":[p for p,_,_ in HONEYPOT_CONFIGS]}))
-
-    elif cmd == "get_honeypot_hits":
-        await ws.send(json.dumps({"type":"honeypot_hits","hits":HONEYPOT_HITS[-50:],"enabled":HONEYPOT_ENABLED}))
-
 async def broadcast_state():
     global CLIENTS
     save_counter = 0
@@ -1518,7 +1228,7 @@ async def broadcast_state():
         await asyncio.sleep(1)
         snapshot_traffic()
         save_counter += 1
-        if save_counter >= 30:
+        if save_counter >= 30:  # Sauvegarder toutes les 30 secondes
             save_settings()
             save_counter = 0
         if CLIENTS:
@@ -1530,23 +1240,6 @@ async def broadcast_state():
                 except Exception:
                     dead.add(ws)
             CLIENTS = CLIENTS - dead
-
-async def ws_handler(websocket):
-    global CLIENTS
-    CLIENTS.add(websocket)
-    log.info(f"[WS] Client connecté: {websocket.remote_address}")
-    try:
-        await websocket.send(json.dumps(build_state_message()))
-        async for raw in websocket:
-            try:
-                msg = json.loads(raw)
-                await handle_ws_command(websocket, msg)
-            except json.JSONDecodeError:
-                pass
-    except Exception as e:
-        log.debug(f"[WS] Client déconnecté: {e}")
-    finally:
-        CLIENTS.discard(websocket)
 
 def auto_select_interface() -> str:
     if not HAS_SCAPY:
@@ -1698,20 +1391,8 @@ async def main_async(interface: str):
     threading.Thread(target=start_capture, args=(interface,), daemon=True).start()
     log.info(f"[WS] Serveur WebSocket sur ws://localhost:{CFG.ws_port}")
     if HAS_WS:
-        try:
-            ver = tuple(int(x) for x in websockets.__version__.split(".")[:2])
-        except Exception:
-            ver = (0, 0)
-
-        if ver >= (14, 0):
-            # websockets 14+ : serve() est un context manager async
-            async with websockets.serve(ws_handler, "localhost", CFG.ws_port):
-                log.info("[WS] Serveur démarré (websockets 14+)")
-                await broadcast_state()
-        else:
-            # websockets < 14 : serve() retourne un objet awaitable
-            server = await websockets.serve(ws_handler, "localhost", CFG.ws_port)
-            log.info("[WS] Serveur démarré (websockets legacy)")
+        stop = asyncio.Future()
+        async with websockets.serve(ws_handler, "localhost", CFG.ws_port):
             await broadcast_state()
     else:
         while True:
@@ -1805,15 +1486,13 @@ def main():
 
     print("""
 ╔══════════════════════════════════════════════╗
-║      NetGuard Pro v2.0.0 — Démarrage        ║
+║      NetGuard Pro v1.7.0 — Démarrage        ║
 ╠══════════════════════════════════════════════╣
-║  IDS • DPI • Honeypot • DNS BH • Scan LAN  ║
-║  Score risque • ASN • Timeline • Geo        ║
+║  DPI + Record + Auto-block + Suricata IDS   ║
+║  Settings persistants activés               ║
 ╚══════════════════════════════════════════════╝
 """)
     log.info("[MODE] Protection active" if CFG.can_block else "[MODE] Surveillance uniquement")
-    if not HAS_SCAPY:
-        log.info("[INFO] Npcap non installé — mode DEMO actif (trafic simulé). Installe Npcap pour la capture réelle.")
     try:
         asyncio.run(main_async(interface))
     except KeyboardInterrupt:
