@@ -24,6 +24,14 @@ from typing import Optional
 import os
 import sys
 import hashlib
+
+# Fix Windows console encoding
+if sys.platform == 'win32':
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
 import math
 import urllib.request
 import urllib.error
@@ -3096,16 +3104,19 @@ def main():
     # Charger les settings sauvegardés
     load_settings()
 
-    print("""
-╔══════════════════════════════════════════════════════════════╗
-║           NetGuard Pro v3.0.0 — Démarrage                   ║
-╠══════════════════════════════════════════════════════════════╣
-║  IDS • DPI • Honeypot • DNS BH • Scan LAN • GeoBlock       ║
-║  Anomaly Detection • JA3 • Entropy • Attack Correlation     ║
-║  Threat Intel (VT/OTX/Feeds) • Discord/Telegram Alerts      ║
-║  Device Isolation • Quarantine • Forensic • WireGuard VPN   ║
-╚══════════════════════════════════════════════════════════════╝
+    try:
+        print("""
++--------------------------------------------------------------+
+|           NetGuard Pro v3.0.0 -- Demarrage                   |
++--------------------------------------------------------------+
+|  IDS - DPI - Honeypot - DNS BH - Scan LAN - GeoBlock        |
+|  Anomaly Detection - JA3 - Entropy - Attack Correlation      |
+|  Threat Intel (VT/OTX/Feeds) - Discord/Telegram Alerts       |
+|  Device Isolation - Quarantine - Forensic - WireGuard VPN    |
++--------------------------------------------------------------+
 """)
+    except UnicodeEncodeError:
+        print("[NetGuard Pro v3.0.0] Demarrage...")
     log.info("[MODE] Protection active" if CFG.can_block else "[MODE] Surveillance uniquement")
     try:
         asyncio.run(main_async(interface))
