@@ -45,6 +45,7 @@ except ImportError:
 
 try:
     from scapy.all import sniff, IP, TCP, UDP, ICMP, DNS, ARP, Raw, get_if_list
+    from scapy.layers.inet6 import IPv6
     HAS_SCAPY = True
 except ImportError:
     HAS_SCAPY = False
@@ -1927,11 +1928,19 @@ def _wg_load_peers():
             log.error(f"[WG] Erreur chargement peers: {e}")
 
 def analyze_packet(pkt):
-    if not HAS_SCAPY or not pkt.haslayer(IP):
+    if not HAS_SCAPY:
         return
 
-    src_ip   = pkt[IP].src
-    dst_ip   = pkt[IP].dst
+    # Support both IPv4 and IPv6
+    if pkt.haslayer(IP):
+        src_ip = pkt[IP].src
+        dst_ip = pkt[IP].dst
+    elif pkt.haslayer(IPv6):
+        src_ip = pkt[IPv6].src
+        dst_ip = pkt[IPv6].dst
+    else:
+        return  # Not an IP packet (e.g. pure ARP)
+
     pkt_len  = len(pkt)
     proto    = get_protocol_name(pkt)
     dst_port = 0
@@ -2902,8 +2911,45 @@ async def ws_handler(websocket):
 def auto_select_interface() -> str:
     if not HAS_SCAPY:
         return "eth0"
+    # On Windows, use friendly names to find the real active interface
+    if sys.platform == "win32":
+        try:
+            from scapy.arch.windows import get_windows_if_list
+            win_ifaces = get_windows_if_list()
+            # Priority: real network adapters with an IPv4 address (not 169.254.x.x)
+            preferred = ["Wi-Fi", "Ethernet", "Wireless", "Realtek", "Intel", "MediaTek"]
+            for pref in preferred:
+                for iface in win_ifaces:
+                    name = iface.get("name", "")
+                    desc = iface.get("description", "")
+                    ips  = iface.get("ips", [])
+                    # Must have a real IPv4 address (not link-local 169.254.x.x)
+                    has_ipv4 = any(
+                        ip.count(".") == 3 and not ip.startswith("169.254.") and ip != "127.0.0.1"
+                        for ip in ips
+                    )
+                    if has_ipv4 and (pref.lower() in name.lower() or pref.lower() in desc.lower()):
+                        guid = iface.get("guid", "")
+                        npf = f"\\Device\\NPF_{guid}" if guid else name
+                        log.info(f"[AUTO] Interface trouvée: {name} ({desc}) -> {npf}")
+                        return npf
+            # Fallback: any interface with a real IPv4
+            for iface in win_ifaces:
+                ips = iface.get("ips", [])
+                has_ipv4 = any(
+                    ip.count(".") == 3 and not ip.startswith("169.254.") and ip != "127.0.0.1"
+                    for ip in ips
+                )
+                if has_ipv4:
+                    guid = iface.get("guid", "")
+                    npf = f"\\Device\\NPF_{guid}" if guid else iface.get("name", "")
+                    log.info(f"[AUTO] Fallback interface: {iface.get('name','')} -> {npf}")
+                    return npf
+        except Exception as e:
+            log.warning(f"[AUTO] Windows interface detection failed: {e}")
+    # Linux/Mac fallback
     ifaces = get_if_list()
-    for pref in ["Wi-Fi", "wlan0", "wlan1", "eth0", "en0", "Ethernet"]:
+    for pref in ["wlan0", "wlan1", "eth0", "en0", "Wi-Fi", "Ethernet"]:
         for iface in ifaces:
             if pref.lower() in iface.lower():
                 return iface
@@ -2915,8 +2961,15 @@ def start_capture(interface: str):
         log.error("Sur Windows, installe aussi Npcap: https://npcap.com/#download")
         sys.exit(1)
     log.info(f"[CAPTURE] Démarrage sur: {interface}")
+
+    def safe_analyze(pkt):
+        try:
+            analyze_packet(pkt)
+        except Exception as e:
+            log.debug(f"[CAPTURE] Packet analysis error: {e}")
+
     try:
-        sniff(iface=interface, prn=analyze_packet, store=False, filter="ip or arp")
+        sniff(iface=interface, prn=safe_analyze, store=False)
     except PermissionError:
         log.error("ERREUR: Permissions insuffisantes. Lance en tant qu'Administrateur.")
         sys.exit(1)
