@@ -24,6 +24,7 @@ from typing import Optional
 import os
 import sys
 import hashlib
+import base64
 
 # Fix Windows console encoding
 if sys.platform == 'win32':
@@ -1667,20 +1668,45 @@ def generate_forensic_report(ip: str, trigger: str) -> str:
 # v3.0 — WIREGUARD VPN SERVER
 # ═══════════════════════════════════════════════════════════════════════════
 
+def _wg_genkey_python() -> tuple:
+    """Génère une paire de clés WireGuard en pur Python via X25519 (fallback sans wg CLI)"""
+    try:
+        from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+        from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat, PrivateFormat, NoEncryption
+        privkey_obj = X25519PrivateKey.generate()
+        priv_b64 = base64.b64encode(privkey_obj.private_bytes(Encoding.Raw, PrivateFormat.Raw, NoEncryption())).decode()
+        pub_b64 = base64.b64encode(privkey_obj.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)).decode()
+        log.info("[WG] Clés générées via Python cryptography (fallback)")
+        return priv_b64, pub_b64
+    except ImportError:
+        log.error("[WG] Ni wg CLI ni Python cryptography disponible. Installe: pip install cryptography")
+        return "", ""
+    except Exception as e:
+        log.error(f"[WG] Erreur génération clés Python: {e}")
+        return "", ""
+
+def _wg_genpsk_python() -> str:
+    """Génère un preshared key en pur Python (fallback sans wg CLI)"""
+    return base64.b64encode(os.urandom(32)).decode()
+
 def _wg_genkey() -> tuple:
-    """Génère une paire de clés WireGuard (privkey, pubkey)"""
+    """Génère une paire de clés WireGuard (privkey, pubkey) — essaie wg CLI puis fallback Python"""
     try:
         result = _subprocess.run(["wg", "genkey"], capture_output=True, text=True, timeout=5)
         privkey = result.stdout.strip()
+        if not privkey:
+            raise ValueError("wg genkey returned empty")
         result2 = _subprocess.run(["wg", "pubkey"], input=privkey, capture_output=True, text=True, timeout=5)
         pubkey = result2.stdout.strip()
+        if not pubkey:
+            raise ValueError("wg pubkey returned empty")
         return privkey, pubkey
-    except FileNotFoundError:
-        log.error("[WG] WireGuard non installé. Installe avec: apt install wireguard (Linux) ou télécharge depuis wireguard.com (Windows)")
-        return "", ""
+    except (FileNotFoundError, ValueError):
+        log.warning("[WG] wg CLI non trouvé, utilisation du fallback Python cryptography")
+        return _wg_genkey_python()
     except Exception as e:
-        log.error(f"[WG] Erreur génération clés: {e}")
-        return "", ""
+        log.warning(f"[WG] Erreur wg CLI ({e}), tentative fallback Python")
+        return _wg_genkey_python()
 
 def _wg_init_server():
     """Initialise les clés serveur WireGuard si nécessaire"""
@@ -1774,12 +1800,14 @@ def wg_add_peer(name: str) -> dict:
             break
     if not next_ip:
         return {"error": "Plus d'adresses IP disponibles"}
-    # Generate preshared key
+    # Generate preshared key (wg CLI or Python fallback)
     try:
         psk_result = _subprocess.run(["wg", "genpsk"], capture_output=True, text=True, timeout=5)
         psk = psk_result.stdout.strip()
+        if not psk:
+            psk = _wg_genpsk_python()
     except Exception:
-        psk = ""
+        psk = _wg_genpsk_python()
     peer = {
         "name":          name,
         "pubkey":        pubkey,
@@ -1848,8 +1876,15 @@ def wg_start() -> dict:
         log.info(f"[WG] Tunnel {CFG.wg_interface} démarré")
         return {"ok": True, "status": "started"}
     except FileNotFoundError:
-        return {"error": "WireGuard non installé"}
+        msg = "WireGuard non installé. "
+        if IS_WINDOWS:
+            msg += "Lance install_wireguard.bat en admin ou installe depuis https://wireguard.com/install/"
+        else:
+            msg += "Installe avec: sudo apt install wireguard"
+        log.error(f"[WG] {msg}")
+        return {"error": msg}
     except Exception as e:
+        log.error(f"[WG] Erreur démarrage tunnel: {e}")
         return {"error": str(e)}
 
 def wg_stop() -> dict:
@@ -1866,6 +1901,13 @@ def wg_stop() -> dict:
         WG_STATUS["peers_connected"] = 0
         log.info(f"[WG] Tunnel {CFG.wg_interface} arrêté")
         return {"ok": True, "status": "stopped"}
+    except FileNotFoundError:
+        msg = "WireGuard non installé. "
+        if IS_WINDOWS:
+            msg += "Lance install_wireguard.bat en admin"
+        else:
+            msg += "Installe avec: sudo apt install wireguard"
+        return {"error": msg}
     except Exception as e:
         return {"error": str(e)}
 
@@ -1901,8 +1943,9 @@ def wg_get_status() -> dict:
         WG_STATUS["peers_connected"] = connected
     except FileNotFoundError:
         WG_STATUS["running"] = False
+        WG_STATUS["not_installed"] = True
     except Exception:
-        pass
+        WG_STATUS["running"] = False
     return WG_STATUS
 
 def _wg_save_peers():
