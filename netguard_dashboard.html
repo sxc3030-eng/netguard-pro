@@ -337,209 +337,174 @@ tr:hover td{background:var(--bg4)22}
     <!-- TAB: DASHBOARD -->
     <div id="tab-dashboard" class="dash">
 
-      <!-- KPI Row -->
-      <div class="kibana-grid">
-        <div class="kibana-panel span-3">
-          <div class="kibana-panel-header"><span class="kibana-panel-title" data-t="dash_pps">Packets / sec</span></div>
-          <div class="kibana-panel-body"><div class="kpi-tile">
-            <div class="kpi-value" id="m-pps">0</div>
-            <div class="kpi-sub" id="m-total">Total: 0</div>
-            <div class="kpi-label" data-t="dash_throughput">Throughput</div>
-            <div class="kpi-trend neutral" id="kpi-trend-pps">—</div>
-          </div></div>
+      <!-- Métriques ligne 1 -->
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px">
+        <div class="metric-card">
+          <div class="metric-label">Paquets / sec</div>
+          <div class="metric-value c-blue" id="m-pps">—</div>
+          <div class="metric-sub" id="m-total">Total: —</div>
         </div>
-        <div class="kibana-panel span-3">
-          <div class="kibana-panel-header"><span class="kibana-panel-title" data-t="dash_blocked">Blocked</span></div>
-          <div class="kibana-panel-body"><div class="kpi-tile">
-            <div class="kpi-value" style="color:var(--red)" id="m-blocked">0</div>
-            <div class="kpi-sub" id="m-brate">0%</div>
-            <div class="kpi-label" data-t="dash_block_rate">Block Rate</div>
-            <div class="kpi-trend neutral" id="kpi-trend-blocked">—</div>
-          </div></div>
+        <div class="metric-card">
+          <div class="metric-label">Bloqués</div>
+          <div class="metric-value c-red" id="m-blocked">—</div>
+          <div class="metric-sub" id="m-brate">—% du trafic</div>
         </div>
-        <div class="kibana-panel span-3">
-          <div class="kibana-panel-header"><span class="kibana-panel-title" data-t="dash_threats_title">Threats</span></div>
-          <div class="kibana-panel-body"><div class="kpi-tile">
-            <div class="kpi-value" style="color:var(--amber)" id="m-threats">0</div>
-            <div class="kpi-sub" id="m-threat-sub">0 critical</div>
-            <div class="kpi-label" data-t="dash_detected">Detected</div>
-            <div class="kpi-trend neutral" id="kpi-trend-threats">—</div>
-          </div></div>
+        <div class="metric-card">
+          <div class="metric-label">Menaces</div>
+          <div class="metric-value c-amber" id="m-threats">—</div>
+          <div class="metric-sub" id="m-threat-sub">0 critiques</div>
         </div>
-        <div class="kibana-panel span-3">
-          <div class="kibana-panel-header"><span class="kibana-panel-title" data-t="dash_connections">Connections</span></div>
-          <div class="kibana-panel-body"><div class="kpi-tile">
-            <div class="kpi-value" style="color:var(--cyan)" id="m-conns">0</div>
-            <div class="kpi-sub">&nbsp;</div>
-            <div class="kpi-label" data-t="dash_active">Active</div>
-            <div class="kpi-trend neutral" id="kpi-trend-conns">—</div>
-          </div></div>
+        <div class="metric-card">
+          <div class="metric-label">Connexions actives</div>
+          <div class="metric-value c-green" id="m-conns">—</div>
+          <div class="metric-sub">Établies</div>
         </div>
       </div>
 
-      <!-- Row 1: Traffic + Attack Distribution -->
-      <div class="kibana-grid">
-        <div class="kibana-panel span-8">
-          <div class="kibana-panel-header">
-            <span class="kibana-panel-title" data-t="dash_traffic">Network Traffic</span>
-            <div class="kibana-panel-icons">
-              <span style="font-size:10px;color:var(--text3)" id="bw-label">0 B/s</span>
-              <button class="popout-btn" onclick="popout('traffic')" title="Expand">⤢</button>
-            </div>
+      <!-- Ligne 2 : trafic + perf chart + camembert pays -->
+      <div style="display:grid;grid-template-columns:1fr 1fr 260px;gap:12px">
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Trafic réseau (60s)</span>
+            <span style="font-size:10px;color:var(--text3)" id="bw-label">—</span>
+            <button class="popout-btn" onclick="popout('traffic')" title="Ouvrir dans une fenêtre">⤢</button>
           </div>
-          <div class="kibana-panel-body" style="padding:8px;min-height:200px">
-            <canvas id="traffic-canvas" style="width:100%;height:180px;border-radius:4px"></canvas>
-            <div style="display:flex;gap:16px;justify-content:center;margin-top:6px;font-size:10px">
-              <span style="color:#3dffb4">● In</span>
-              <span style="color:#4d9fff">● Out</span>
-              <span style="color:#ff4d6a">● Blocked</span>
+          <div style="padding:10px 14px 8px">
+            <canvas id="traffic-canvas" style="width:100%;height:80px;display:block"></canvas>
+            <div style="display:flex;gap:14px;margin-top:6px">
+              <span style="font-size:10px;color:var(--text3);display:flex;align-items:center;gap:4px"><span style="width:8px;height:2px;background:var(--green);display:inline-block"></span>Entrant</span>
+              <span style="font-size:10px;color:var(--text3);display:flex;align-items:center;gap:4px"><span style="width:8px;height:2px;background:var(--blue);display:inline-block"></span>Sortant</span>
+              <span style="font-size:10px;color:var(--text3);display:flex;align-items:center;gap:4px"><span style="width:8px;height:2px;background:var(--red);display:inline-block"></span>Bloqué</span>
             </div>
           </div>
         </div>
-        <div class="kibana-panel span-4">
-          <div class="kibana-panel-header">
-            <span class="kibana-panel-title" data-t="dash_attack_dist">Attack Distribution</span>
-            <div class="kibana-panel-icons"><button class="popout-btn" onclick="popout('attacks')" title="Expand">⤢</button></div>
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Performance réseau</span>
+            <button class="popout-btn" onclick="popout('perf')" title="Ouvrir">⤢</button>
           </div>
-          <div class="kibana-panel-body">
-            <div id="attack-by-country" style="max-height:240px;overflow-y:auto"></div>
+          <div style="padding:10px 14px 8px">
+            <canvas id="perf-chart" style="width:100%;height:80px;display:block"></canvas>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Pays attaquants</span>
+            <span style="font-size:10px;color:var(--text3)" id="geo-hits-total">0 attaques</span>
+            <button class="popout-btn" onclick="popout('pie')" title="Ouvrir">⤢</button>
+          </div>
+          <div style="padding:10px;display:flex;flex-direction:column;align-items:center">
+            <canvas id="geo-pie" width="120" height="120" style="display:block"></canvas>
+            <div id="geo-pie-legend" style="width:100%;margin-top:6px"></div>
           </div>
         </div>
       </div>
 
-      <!-- Row 2: Performance + Geo-IP + Protocol -->
-      <div class="kibana-grid">
-        <div class="kibana-panel span-4">
-          <div class="kibana-panel-header">
-            <span class="kibana-panel-title">Performance</span>
-            <div class="kibana-panel-icons"><button class="popout-btn" onclick="popout('perf')" title="Expand">⤢</button></div>
+      <!-- Ligne 3 : types attaques + protocoles + top IPs -->
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Types d'attaques</span>
+            <button class="popout-btn" onclick="popout('attacks')" title="Ouvrir">⤢</button>
           </div>
-          <div class="kibana-panel-body" style="padding:8px;min-height:200px">
-            <canvas id="perf-chart" style="width:100%;height:180px;border-radius:4px"></canvas>
-          </div>
+          <div style="padding:10px 14px" id="attack-by-country"></div>
         </div>
-        <div class="kibana-panel span-4">
-          <div class="kibana-panel-header">
-            <span class="kibana-panel-title" data-t="dash_geo">Geo-IP Attacks</span>
-            <div class="kibana-panel-icons">
-              <span style="font-size:10px;color:var(--text3)" id="geo-hits-total">0</span>
-              <button class="popout-btn" onclick="popout('geo')" title="Expand">⤢</button>
-            </div>
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Protocoles</span>
+            <button class="popout-btn" onclick="popout('proto')" title="Ouvrir">⤢</button>
           </div>
-          <div class="kibana-panel-body" style="text-align:center">
-            <canvas id="geo-pie" width="140" height="140" style="margin:0 auto"></canvas>
-            <div id="geo-pie-legend" style="margin-top:6px;font-size:10px;display:flex;flex-wrap:wrap;gap:4px 10px;justify-content:center"></div>
-          </div>
+          <div style="padding:10px 14px" id="dash-proto-bars"></div>
         </div>
-        <div class="kibana-panel span-4">
-          <div class="kibana-panel-header">
-            <span class="kibana-panel-title" data-t="dash_proto">Protocols</span>
-            <div class="kibana-panel-icons"><button class="popout-btn" onclick="popout('proto')" title="Expand">⤢</button></div>
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Top IPs suspectes</span>
+            <span style="font-size:10px;color:var(--text3)" id="top-ips-total">0 IPs</span>
+            <button class="popout-btn" onclick="popout('topips')" title="Ouvrir">⤢</button>
           </div>
-          <div class="kibana-panel-body">
-            <div id="dash-proto-bars" style="display:flex;flex-direction:column;gap:6px"></div>
-          </div>
+          <div style="padding:12px 14px" id="top-ips-chart"></div>
         </div>
       </div>
 
-      <!-- Row 3: Top IPs + Threats + Attack Chains -->
-      <div class="kibana-grid">
-        <div class="kibana-panel span-4">
-          <div class="kibana-panel-header">
-            <span class="kibana-panel-title" data-t="dash_top_ips">Top Threatening IPs</span>
-            <div class="kibana-panel-icons">
-              <span style="font-size:10px;color:var(--text3)" id="top-ips-total">0</span>
-              <button class="popout-btn" onclick="popout('topips')" title="Expand">⤢</button>
-            </div>
+      <!-- Ligne 4 : menaces + chaînes attaque + anomalies -->
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Menaces récentes</span>
+            <button class="popout-btn" onclick="popout('threats')" title="Ouvrir">⤢</button>
           </div>
-          <div class="kibana-panel-body">
-            <div id="top-ips-chart" style="display:flex;flex-direction:column;gap:4px;max-height:200px;overflow-y:auto"></div>
-          </div>
+          <div id="dash-threats-compact" style="max-height:200px;overflow-y:auto"></div>
         </div>
-        <div class="kibana-panel span-4">
-          <div class="kibana-panel-header">
-            <span class="kibana-panel-title" data-t="dash_recent_threats">Recent Threats</span>
-            <div class="kibana-panel-icons"><button class="popout-btn" onclick="popout('threats')" title="Expand">⤢</button></div>
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Chaînes d'attaque</span>
+            <button class="popout-btn" onclick="popout('attackchain')" title="Ouvrir">⤢</button>
           </div>
-          <div class="kibana-panel-body">
-            <div id="dash-threats-compact" style="display:flex;flex-direction:column;gap:4px;max-height:200px;overflow-y:auto;font-size:11px"></div>
-          </div>
+          <div id="dash-attack-chains" style="padding:10px 14px;max-height:200px;overflow-y:auto"></div>
         </div>
-        <div class="kibana-panel span-4">
-          <div class="kibana-panel-header">
-            <span class="kibana-panel-title" data-t="dash_chains">Attack Chains</span>
-            <div class="kibana-panel-icons"><button class="popout-btn" onclick="popout('attackchain')" title="Expand">⤢</button></div>
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Anomalies</span>
+            <button class="popout-btn" onclick="popout('anomaly')" title="Ouvrir">⤢</button>
           </div>
-          <div class="kibana-panel-body">
-            <div id="dash-attack-chains" style="display:flex;flex-direction:column;gap:4px;max-height:200px;overflow-y:auto;font-size:11px"></div>
-          </div>
+          <div id="dash-anomaly-list" style="padding:10px 14px;max-height:200px;overflow-y:auto"></div>
         </div>
       </div>
 
-      <!-- Row 4: Anomalies + Intel + LAN/OS -->
-      <div class="kibana-grid">
-        <div class="kibana-panel span-4">
-          <div class="kibana-panel-header">
-            <span class="kibana-panel-title" data-t="dash_anomalies">Anomalies</span>
-            <div class="kibana-panel-icons"><button class="popout-btn" onclick="popout('anomaly')" title="Expand">⤢</button></div>
+      <!-- Ligne 5 : LAN + OS + Intel + Service -->
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px">
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Réseau local</span>
+            <button class="popout-btn" onclick="startLanScan();showTab('lan',null)" title="Scanner">🔍</button>
           </div>
-          <div class="kibana-panel-body">
-            <div id="dash-anomaly-list" style="display:flex;flex-direction:column;gap:4px;max-height:200px;overflow-y:auto;font-size:11px"></div>
-          </div>
+          <div style="padding:10px 14px" id="dash-lan"></div>
         </div>
-        <div class="kibana-panel span-4">
-          <div class="kibana-panel-header">
-            <span class="kibana-panel-title" data-t="dash_intel">Threat Intel Hits</span>
-            <div class="kibana-panel-icons"><button class="popout-btn" onclick="popout('threatintel')" title="Expand">⤢</button></div>
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">OS détectés</span>
+            <button class="popout-btn" onclick="showTab('fingerprint',null)" title="Détail">→</button>
           </div>
-          <div class="kibana-panel-body">
-            <div id="dash-intel-list" style="display:flex;flex-direction:column;gap:4px;max-height:200px;overflow-y:auto;font-size:11px"></div>
-          </div>
+          <div style="padding:12px 14px;display:flex;flex-direction:column;gap:8px" id="dash-os"></div>
         </div>
-        <div class="kibana-panel span-4">
-          <div class="kibana-panel-header">
-            <span class="kibana-panel-title" data-t="dash_lan">LAN & OS</span>
-            <div class="kibana-panel-icons"><button class="popout-btn" onclick="popout('lan')" title="Expand">⤢</button></div>
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Threat Intel</span>
+            <button class="popout-btn" onclick="popout('threatintel')" title="Ouvrir">⤢</button>
           </div>
-          <div class="kibana-panel-body" style="display:flex;flex-direction:column;gap:8px">
-            <div id="dash-lan" style="display:flex;flex-direction:column;gap:3px;max-height:100px;overflow-y:auto;font-size:11px"></div>
-            <div style="border-top:1px solid var(--border);padding-top:6px">
-              <div style="font-size:10px;color:var(--text3);margin-bottom:4px;text-transform:uppercase">OS Detection</div>
-              <div id="dash-os" style="display:flex;flex-direction:column;gap:3px;font-size:11px"></div>
+          <div id="dash-intel-list" style="padding:10px 14px;max-height:150px;overflow-y:auto"></div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title" style="display:flex;align-items:center;gap:8px">
+              <span id="rec-dot" style="width:9px;height:9px;border-radius:50%;background:var(--text3);display:inline-block;flex-shrink:0"></span>
+              Service
+            </span>
+            <button onclick="sendCmd({cmd:'toggle_record'})" id="rec-btn" class="btn" style="display:flex;align-items:center;gap:5px;padding:4px 10px;font-size:11px">
+              <span id="rec-btn-icon">⏺</span><span id="rec-btn-label">REC</span>
+            </button>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:12px">
+            <div style="background:var(--bg4);border-radius:6px;padding:8px;text-align:center">
+              <div style="font-size:16px;font-weight:600;color:var(--amber);font-family:'Geist Mono',monospace" id="rec-pkts">0</div>
+              <div style="font-size:10px;color:var(--text3);margin-top:2px">Paquets enreg.</div>
+            </div>
+            <div style="background:var(--bg4);border-radius:6px;padding:8px;text-align:center">
+              <div style="font-size:16px;font-weight:600;color:var(--purple);font-family:'Geist Mono',monospace" id="dash-sur-count">27</div>
+              <div style="font-size:10px;color:var(--text3);margin-top:2px">Règles IDS</div>
+            </div>
+            <div style="background:var(--bg4);border-radius:6px;padding:8px;text-align:center">
+              <div style="font-size:16px;font-weight:600;color:var(--blue);font-family:'Geist Mono',monospace" id="dash-bl-count">0</div>
+              <div style="font-size:10px;color:var(--text3);margin-top:2px">Blacklist IPs</div>
+            </div>
+            <div style="background:var(--bg4);border-radius:6px;padding:8px;text-align:center">
+              <div style="font-size:14px;font-weight:600;color:var(--green)" id="dash-service-status">● ON</div>
+              <div style="font-size:10px;color:var(--text3);margin-top:2px">Service</div>
             </div>
           </div>
         </div>
       </div>
 
-      <!-- Row 5: Status Bar -->
-      <div class="kibana-grid">
-        <div class="kibana-panel span-3">
-          <div class="kibana-panel-header"><span class="kibana-panel-title">Recording</span></div>
-          <div class="kibana-panel-body">
-            <div style="display:flex;align-items:center;gap:8px">
-              <span id="rec-dot" style="width:8px;height:8px;border-radius:50%;background:var(--text3)"></span>
-              <button id="rec-btn" class="btn btn-sm" onclick="sendCmd({cmd:'toggle_record'})" style="font-size:11px">
-                <span id="rec-btn-icon">⏺</span> <span id="rec-btn-label" data-t="rec_start">Record</span>
-              </button>
-              <span id="rec-pkts" style="font-size:11px;color:var(--text3)">0 pkts</span>
-            </div>
-          </div>
-        </div>
-        <div class="kibana-panel span-3">
-          <div class="kibana-panel-header"><span class="kibana-panel-title" data-t="dash_ids_rules">IDS Rules</span></div>
-          <div class="kibana-panel-body"><div class="kpi-tile" style="padding:8px"><div class="kpi-value" style="font-size:20px" id="dash-sur-count">0</div></div></div>
-        </div>
-        <div class="kibana-panel span-3">
-          <div class="kibana-panel-header"><span class="kibana-panel-title" data-t="dash_blacklist">Blacklist</span></div>
-          <div class="kibana-panel-body"><div class="kpi-tile" style="padding:8px"><div class="kpi-value" style="font-size:20px" id="dash-bl-count">0</div></div></div>
-        </div>
-        <div class="kibana-panel span-3">
-          <div class="kibana-panel-header"><span class="kibana-panel-title" data-t="dash_service">Service</span></div>
-          <div class="kibana-panel-body"><div class="kpi-tile" style="padding:8px"><div id="dash-service-status" style="font-size:13px;font-weight:600;color:var(--green)">● Active</div></div></div>
-        </div>
-      </div>
-
-      <!-- Local IPs (hidden, used by render) -->
       <div id="dash-local-ips" style="display:none"></div>
 
     </div>
@@ -1786,55 +1751,27 @@ function showToast(msg, color) {
   setTimeout(() => t.remove(), 4000);
 }
 
-let prevKPI = {pps:0, blocked:0, threats:0, conns:0};
-
 // ── Render ────────────────────────────────────────────────────────────────
 function render(s) {
   if (!s) return;
-  // Metrics — safe access with defaults
-  const hist = s.traffic_history || [];
-  const lastSnap = hist.length ? hist[hist.length-1] : null;
+  // Metrics
+  const lastSnap = (s.traffic_history||[]).length ? s.traffic_history[s.traffic_history.length-1] : null;
   setText('m-pps', lastSnap ? (lastSnap.pps||0).toLocaleString() : '—');
   setText('m-total', 'Total: ' + (s.packets_total||0).toLocaleString());
   setText('m-blocked', (s.packets_blocked||0).toLocaleString());
   setText('m-brate', (s.blocked_rate||0) + '% du trafic');
   setText('m-conns', (s.active_conns||0).toLocaleString());
   setText('m-threats', (s.threats_count||0).toLocaleString());
-
-  // KPI Trends
-  const trendEl = (id, cur, prev, invert) => {
-    const el = document.getElementById(id);
-    if(!el) return;
-    if(prev === 0) { el.textContent = '—'; el.className='kpi-trend neutral'; return; }
-    const diff = cur - prev;
-    const pct = Math.abs(Math.round((diff/Math.max(prev,1))*100));
-    if(diff > 0) { el.textContent = '▲ +' + pct + '%'; el.className = 'kpi-trend ' + (invert?'down':'up'); }
-    else if(diff < 0) { el.textContent = '▼ -' + pct + '%'; el.className = 'kpi-trend ' + (invert?'up':'down'); }
-    else { el.textContent = '— 0%'; el.className = 'kpi-trend neutral'; }
-  };
-  const curPPS = lastSnap ? lastSnap.pps : 0;
-  const curBlocked = s.packets_blocked || 0;
-  const curThreats = s.threats_count || 0;
-  const curConns = s.active_conns || 0;
-  // Threat sub-detail
-  if(s.threats) {
-    const crit = s.threats.filter(t => t.severity === 'critical').length;
-    setText('m-threat-sub', crit + ' critical');
-  }
-  trendEl('kpi-trend-pps', curPPS, prevKPI.pps, false);
-  trendEl('kpi-trend-blocked', curBlocked, prevKPI.blocked, true);
-  trendEl('kpi-trend-threats', curThreats, prevKPI.threats, true);
-  trendEl('kpi-trend-conns', curConns, prevKPI.conns, false);
-  prevKPI = {pps:curPPS, blocked:curBlocked, threats:curThreats, conns:curConns};
+  if(s.threats) { const crit = s.threats.filter(t => t.severity === 'critical').length; setText('m-threat-sub', crit + ' critiques'); }
 
   // Traffic chart
-  if (hist.length) {
-    inHistory  = hist.map(p => p.in_bps||0);
-    outHistory = hist.map(p => p.out_bps||0);
-    blockHistory = hist.map(p => p.blocked||0);
+  if (s.traffic_history && s.traffic_history.length) {
+    inHistory  = s.traffic_history.map(p => p.in_bps||0);
+    outHistory = s.traffic_history.map(p => p.out_bps||0);
+    blockHistory = s.traffic_history.map(p => p.blocked||0);
     drawTraffic();
-    drawPerfChart(hist);
-    const last = hist[hist.length-1];
+    drawPerfChart(s.traffic_history);
+    const last = s.traffic_history[s.traffic_history.length-1];
     setText('bw-label', '↓ ' + fmtBytes(last.in_bps||0) + '/s  ↑ ' + fmtBytes(last.out_bps||0) + '/s');
   }
 
@@ -1886,8 +1823,6 @@ function render(s) {
     const mtog = document.getElementById('dpi-mask-toggle');
     if (mtog) mtog.className = 'toggle' + (s.dpi_mask ? ' on' : '');
   }
-
-  // DPI alerts
   if (s.dpi_alerts) renderDpiAlerts(s.dpi_alerts);
 
   // Auto-block
@@ -1897,11 +1832,10 @@ function render(s) {
   }
   if (s.top_ips) renderTopIps(s.top_ips);
 
-  // Suricata
+  // Suricata / OS / LAN
   if (s.os_fingerprints) renderDashboardOS(s.os_fingerprints);
   if (s.recent_packets) renderDashLocalIPs(s.recent_packets);
   if (s.rate_limit_stats) renderDashboardRL(s.rate_limit_stats);
-  // Service stats
   if (s.suricata_rules !== undefined) {
     const dsc = document.getElementById('dash-sur-count');
     if (dsc) dsc.textContent = s.suricata_rules;
@@ -1909,25 +1843,20 @@ function render(s) {
   if (s.blacklist_size !== undefined) {
     const dbl = document.getElementById('dash-bl-count');
     if (dbl) dbl.textContent = s.blacklist_size.toLocaleString();
-  }
-  if (s.blacklist_size !== undefined) {
     renderBlacklistStats({size: s.blacklist_size, updated: s.blacklist_updated ? Date.now()/1000 : 0});
   }
   if (s.rate_limit_stats) renderRateLimitStats(s.rate_limit_stats);
   if (s.os_fingerprints)  renderFingerprints(s.os_fingerprints);
-  if (s.honeypot_enabled !== undefined) {
-    renderHoneypotHits(s.honeypot_hits || [], s.honeypot_enabled);
-  }
+  if (s.honeypot_enabled !== undefined) renderHoneypotHits(s.honeypot_hits || [], s.honeypot_enabled);
   if (s.dns_blackhole_count !== undefined) {
     document.getElementById('dns-total-domains') && (document.getElementById('dns-total-domains').textContent = s.dns_blackhole_count);
     document.getElementById('dns-total-hits') && (document.getElementById('dns-total-hits').textContent = s.dns_blackhole_hits || 0);
   }
   if (s.lan_devices && s.lan_devices.length) {
     renderLanDevices(s.lan_devices);
-    // Dashboard mini LAN panel
     const dlEl = document.getElementById('dash-lan');
     if(dlEl) dlEl.innerHTML = s.lan_devices.slice(0,6).map(d =>
-      '<div style="display:flex;align-items:center;gap:6px"><span style="width:6px;height:6px;border-radius:50%;background:var(--green);flex-shrink:0"></span><span style="color:var(--text)">'+d.ip+'</span><span style="color:var(--text3);font-size:10px">'+(d.mac||'')+'</span></div>'
+      '<div style="display:flex;align-items:center;gap:6px;font-size:11px;padding:2px 0"><span style="width:6px;height:6px;border-radius:50%;background:var(--green);flex-shrink:0"></span><span style="color:var(--text)">'+d.ip+'</span><span style="color:var(--text3);font-size:10px">'+(d.mac||'')+'</span></div>'
     ).join('');
   }
   if (s.suricata_rules !== undefined) {
@@ -1937,7 +1866,7 @@ function render(s) {
   }
   if (s.suricata_alerts) renderSuricataAlerts(s.suricata_alerts);
 
-  // v3.0 — Render new tabs
+  // v3.0 — Advanced security tabs
   if (s.anomaly_alerts) renderAnomalyAlerts(s.anomaly_alerts);
   if (s.attack_chains) renderAttackChains(s.attack_chains);
   if (s.ja3_alerts) renderJA3Alerts(s.ja3_alerts);
@@ -1946,18 +1875,18 @@ function render(s) {
   if (s.webhook_log) renderWebhookLog(s.webhook_log);
   if (s.forensic_reports) renderForensicReports(s.forensic_reports);
 
-  // Dashboard mini panels
+  // v3.0 — Dashboard mini panels
   if(s.anomaly_alerts) {
     const el = document.getElementById('dash-anomaly-list');
     if(el) el.innerHTML = s.anomaly_alerts.slice(0,5).map(a =>
-      '<div style="padding:4px 6px;background:var(--bg3);border-radius:4px;display:flex;justify-content:space-between"><span style="color:var(--amber)">'+a.ip+'</span><span style="color:var(--text3)">'+a.metric+' z='+Number(a.zscore).toFixed(1)+'</span></div>'
-    ).join('') || '<div style="color:var(--text3);text-align:center;padding:20px">No anomalies</div>';
+      '<div style="padding:4px 8px;background:var(--bg4);border-radius:4px;margin-bottom:3px;display:flex;justify-content:space-between;font-size:11px"><span style="color:var(--amber)">'+a.ip+'</span><span style="color:var(--text3)">'+a.metric+' z='+Number(a.zscore).toFixed(1)+'</span></div>'
+    ).join('') || '<div style="font-size:11px;color:var(--text3);padding:8px">Aucune anomalie</div>';
   }
   if(s.threat_intel_hits) {
     const el = document.getElementById('dash-intel-list');
     if(el) el.innerHTML = s.threat_intel_hits.slice(0,5).map(h =>
-      '<div style="padding:4px 6px;background:var(--bg3);border-radius:4px;display:flex;justify-content:space-between"><span style="color:var(--red)">'+h.ip+'</span><span style="color:var(--text3)">'+h.source+'</span></div>'
-    ).join('') || '<div style="color:var(--text3);text-align:center;padding:20px">No hits</div>';
+      '<div style="padding:4px 8px;background:var(--bg4);border-radius:4px;margin-bottom:3px;display:flex;justify-content:space-between;font-size:11px"><span style="color:var(--red)">'+h.ip+'</span><span style="color:var(--text3)">'+h.source+'</span></div>'
+    ).join('') || '<div style="font-size:11px;color:var(--text3);padding:8px">Aucun hit</div>';
   }
   if(s.attack_chains) {
     const el = document.getElementById('dash-attack-chains');
@@ -1965,20 +1894,21 @@ function render(s) {
       const chains = Object.entries(s.attack_chains || {});
       el.innerHTML = chains.slice(0,5).map(([ip,steps]) => {
         const phases = Array.isArray(steps) ? steps.map(s => s.phase || s).join(' → ') : '';
-        return '<div style="padding:4px 6px;background:var(--bg3);border-radius:4px"><span style="color:var(--purple)">'+ip+'</span> <span style="color:var(--text3)">'+phases+'</span></div>';
-      }).join('') || '<div style="color:var(--text3);text-align:center;padding:20px">No chains</div>';
+        return '<div style="padding:4px 8px;background:var(--bg4);border-radius:4px;margin-bottom:3px;font-size:11px"><span style="color:var(--purple)">'+ip+'</span> <span style="color:var(--text3)">'+phases+'</span></div>';
+      }).join('') || '<div style="font-size:11px;color:var(--text3);padding:8px">Aucune chaîne</div>';
     }
   }
-  // Protocol distribution bars (proto_stats is array [{name,count,pct}])
+  // Protocol bars on dashboard
   if(s.proto_stats && s.proto_stats.length) {
     const el = document.getElementById('dash-proto-bars');
     if(el) {
       const colors = ['#4d9fff','#3dffb4','#ffb347','#b47dff','#ff4d6a','#00d4ff'];
-      el.innerHTML = s.proto_stats.slice(0,6).map((p, i) => {
-        return '<div style="display:flex;align-items:center;gap:8px;font-size:11px"><span style="width:40px;color:var(--text2)">'+p.name+'</span><div style="flex:1;height:16px;background:var(--bg4);border-radius:3px;overflow:hidden"><div style="height:100%;width:'+p.pct+'%;background:'+colors[i%6]+';border-radius:3px;transition:width .5s"></div></div><span style="width:35px;text-align:right;color:var(--text3)">'+p.pct+'%</span></div>';
-      }).join('');
+      el.innerHTML = s.proto_stats.slice(0,6).map((p, i) =>
+        '<div style="display:flex;align-items:center;gap:8px;font-size:11px;margin-bottom:4px"><span style="width:45px;color:var(--text2)">'+p.name+'</span><div style="flex:1;height:14px;background:var(--bg4);border-radius:3px;overflow:hidden"><div style="height:100%;width:'+p.pct+'%;background:'+colors[i%6]+';border-radius:3px;transition:width .5s"></div></div><span style="width:35px;text-align:right;color:var(--text3)">'+p.pct+'%</span></div>'
+      ).join('');
     }
   }
+
   // WireGuard
   renderWgPeers(s.wg_peers || []);
   if (s.wg_status) {
@@ -1990,34 +1920,10 @@ function render(s) {
     const connEl = document.getElementById('m-wg-connected');
     if (connEl) connEl.textContent = s.wg_status.peers_connected || 0;
   }
-  const mWgPeers = document.getElementById('m-wg-peers'); if (mWgPeers) mWgPeers.textContent = (s.wg_peers||[]).length;
-  const mWgPub = document.getElementById('m-wg-pubkey'); if (mWgPub && s.wg_server_pubkey) mWgPub.textContent = s.wg_server_pubkey;
-  renderIsolationList(s.lan_devices || [], s.isolated_devices || []);
-  renderQuarantineList(s.quarantined_ips || []);
 
   // Logs
   buildLogsFromState(s);
   filterLogs();
-
-  // Update toggle states
-  if (typeof s.anomaly_enabled !== 'undefined') { const e = document.getElementById('tgl-anomaly'); if(e) e.checked = s.anomaly_enabled; }
-  if (typeof s.profile_enabled !== 'undefined') { const e = document.getElementById('tgl-profiling'); if(e) e.checked = s.profile_enabled; }
-  if (typeof s.correlation_enabled !== 'undefined') { const e = document.getElementById('tgl-correlation'); if(e) e.checked = s.correlation_enabled; }
-  if (typeof s.ja3_enabled !== 'undefined') { const e = document.getElementById('tgl-ja3'); if(e) e.checked = s.ja3_enabled; }
-  if (typeof s.entropy_enabled !== 'undefined') { const e = document.getElementById('tgl-entropy'); if(e) e.checked = s.entropy_enabled; }
-  if (typeof s.threat_feeds_enabled !== 'undefined') { const e = document.getElementById('tgl-feeds'); if(e) e.checked = s.threat_feeds_enabled; }
-  if (typeof s.discord_enabled !== 'undefined') { const el = document.getElementById('discord-status'); if(el) el.textContent = s.discord_enabled ? '✅ Active' : '❌ Inactive'; }
-  if (typeof s.telegram_enabled !== 'undefined') { const el = document.getElementById('telegram-status'); if(el) el.textContent = s.telegram_enabled ? '✅ Active' : '❌ Inactive'; }
-
-  // Intel metrics
-  const mVt = document.getElementById('m-vt-cache'); if (mVt) mVt.textContent = s.vt_cache || 0;
-  const mOtx = document.getElementById('m-otx-ioc'); if (mOtx) mOtx.textContent = s.otx_count || 0;
-  const mFeed = document.getElementById('m-feed-ips'); if (mFeed) mFeed.textContent = s.threat_feed_count || 0;
-  const mIntel = document.getElementById('m-intel-hits'); if (mIntel) mIntel.textContent = (s.threat_intel_hits||[]).length;
-  if (s.threat_feed_last) {
-    const feedEl = document.getElementById('feed-last-update');
-    if (feedEl) feedEl.textContent = s.threat_feed_last > 0 ? 'Last update: ' + new Date(s.threat_feed_last * 1000).toLocaleTimeString() : '';
-  }
 }
 
 function fmtBytes(b) {
@@ -2035,7 +1941,7 @@ function drawTraffic() {
   const c = document.getElementById('traffic-canvas');
   if (!c) return;
   const ctx = c.getContext('2d');
-  c.width = c.offsetWidth || 600; c.height = 180;
+  c.width = c.offsetWidth; c.height = 90;
   const W = c.width, H = c.height;
   ctx.clearRect(0,0,W,H);
   function line(data, color, fill) {
