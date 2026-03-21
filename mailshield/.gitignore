@@ -1,0 +1,41 @@
+# MailShield Pro - .gitignore
+# Ne JAMAIS committer ces fichiers
+
+# Base de donnees locale (contient les emails)
+mailshield.db
+mailshield.db-wal
+mailshield.db-shm
+
+# Quarantaine (contient des fichiers potentiellement dangereux)
+mailshield_quarantine/
+
+# Cache Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Fichiers de distribution
+dist/
+build/
+*.spec
+*.exe
+
+# Securite (tokens et logs)
+.api_token
+mailshield.log
+
+# Variables d'environnement
+.env
+.env.local
+
+# OS
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo

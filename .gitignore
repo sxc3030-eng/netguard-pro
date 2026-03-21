@@ -40,3 +40,22 @@ netguard_icon.png
 backups/
 captures/
 reports/
+
+# MailShield Pro - Données sensibles
+mailshield.db
+mailshield.db-wal
+mailshield.db-shm
+mailshield/mailshield.db
+mailshield/mailshield.db-wal
+mailshield/mailshield.db-shm
+mailshield/.api_token
+mailshield/mailshield_quarantine/
+mailshield/__pycache__/
+mailshield/dist/
+mailshield/build/
+mailshield/*.spec
+
+# WireGuard - Données sensibles
+wireguard/peers.json
+wireguard/server_keys.json
+wireguard/*.conf
