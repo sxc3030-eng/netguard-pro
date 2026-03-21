@@ -335,7 +335,7 @@ tr:hover td{background:var(--bg4)22}
     </div>
 
     <!-- TAB: DASHBOARD -->
-    <div id="tab-dashboard" class="dash" style="display:flex;flex-direction:column;gap:0">
+    <div id="tab-dashboard" class="dash">
 
       <!-- KPI Row -->
       <div class="kibana-grid">
@@ -1640,7 +1640,7 @@ function connect() {
     setTimeout(connect, 3000);
   };
   ws.onerror = () => {};
-  ws.onmessage = e => { try { handleMsg(JSON.parse(e.data)); } catch(_){} };
+  ws.onmessage = e => { try { handleMsg(JSON.parse(e.data)); } catch(err){ console.error('[NetGuard] render error:', err); } };
 }
 
 function sendCmd(obj) {
@@ -1790,14 +1790,16 @@ let prevKPI = {pps:0, blocked:0, threats:0, conns:0};
 
 // ── Render ────────────────────────────────────────────────────────────────
 function render(s) {
-  // Metrics
-  const lastSnap = s.traffic_history.length ? s.traffic_history[s.traffic_history.length-1] : null;
-  setText('m-pps', lastSnap ? lastSnap.pps.toLocaleString() : '—');
-  setText('m-total', 'Total: ' + s.packets_total.toLocaleString());
-  setText('m-blocked', s.packets_blocked.toLocaleString());
-  setText('m-brate', s.blocked_rate + '% du trafic');
-  setText('m-conns', s.active_conns.toLocaleString());
-  setText('m-threats', s.threats_count.toLocaleString());
+  if (!s) return;
+  // Metrics — safe access with defaults
+  const hist = s.traffic_history || [];
+  const lastSnap = hist.length ? hist[hist.length-1] : null;
+  setText('m-pps', lastSnap ? (lastSnap.pps||0).toLocaleString() : '—');
+  setText('m-total', 'Total: ' + (s.packets_total||0).toLocaleString());
+  setText('m-blocked', (s.packets_blocked||0).toLocaleString());
+  setText('m-brate', (s.blocked_rate||0) + '% du trafic');
+  setText('m-conns', (s.active_conns||0).toLocaleString());
+  setText('m-threats', (s.threats_count||0).toLocaleString());
 
   // KPI Trends
   const trendEl = (id, cur, prev, invert) => {
@@ -1826,14 +1828,14 @@ function render(s) {
   prevKPI = {pps:curPPS, blocked:curBlocked, threats:curThreats, conns:curConns};
 
   // Traffic chart
-  if (s.traffic_history.length) {
-    inHistory  = s.traffic_history.map(p => p.in_bps);
-    outHistory = s.traffic_history.map(p => p.out_bps);
-    blockHistory = s.traffic_history.map(p => p.blocked);
+  if (hist.length) {
+    inHistory  = hist.map(p => p.in_bps||0);
+    outHistory = hist.map(p => p.out_bps||0);
+    blockHistory = hist.map(p => p.blocked||0);
     drawTraffic();
-    drawPerfChart(s.traffic_history);
-    const last = s.traffic_history[s.traffic_history.length-1];
-    setText('bw-label', '↓ ' + fmtBytes(last.in_bps) + '/s  ↑ ' + fmtBytes(last.out_bps) + '/s');
+    drawPerfChart(hist);
+    const last = hist[hist.length-1];
+    setText('bw-label', '↓ ' + fmtBytes(last.in_bps||0) + '/s  ↑ ' + fmtBytes(last.out_bps||0) + '/s');
   }
 
   renderProto(s.proto_stats);
@@ -1920,7 +1922,14 @@ function render(s) {
     document.getElementById('dns-total-domains') && (document.getElementById('dns-total-domains').textContent = s.dns_blackhole_count);
     document.getElementById('dns-total-hits') && (document.getElementById('dns-total-hits').textContent = s.dns_blackhole_hits || 0);
   }
-  if (s.lan_devices && s.lan_devices.length) renderLanDevices(s.lan_devices);
+  if (s.lan_devices && s.lan_devices.length) {
+    renderLanDevices(s.lan_devices);
+    // Dashboard mini LAN panel
+    const dlEl = document.getElementById('dash-lan');
+    if(dlEl) dlEl.innerHTML = s.lan_devices.slice(0,6).map(d =>
+      '<div style="display:flex;align-items:center;gap:6px"><span style="width:6px;height:6px;border-radius:50%;background:var(--green);flex-shrink:0"></span><span style="color:var(--text)">'+d.ip+'</span><span style="color:var(--text3);font-size:10px">'+(d.mac||'')+'</span></div>'
+    ).join('');
+  }
   if (s.suricata_rules !== undefined) {
     document.querySelectorAll('#sur-count').forEach(el => el.textContent = s.suricata_rules + ' règles');
     const tog = document.getElementById('sur-toggle');
@@ -2026,7 +2035,7 @@ function drawTraffic() {
   const c = document.getElementById('traffic-canvas');
   if (!c) return;
   const ctx = c.getContext('2d');
-  c.width = c.offsetWidth; c.height = 90;
+  c.width = c.offsetWidth; c.height = Math.max(c.offsetHeight, 160);
   const W = c.width, H = c.height;
   ctx.clearRect(0,0,W,H);
   function line(data, color, fill) {
