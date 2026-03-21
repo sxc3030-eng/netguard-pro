@@ -1668,6 +1668,43 @@ def generate_forensic_report(ip: str, trigger: str) -> str:
 # v3.0 — WIREGUARD VPN SERVER
 # ═══════════════════════════════════════════════════════════════════════════
 
+def _wg_find_binary(name: str) -> str:
+    """Trouve le chemin complet d'un binaire WireGuard (wg, wireguard)"""
+    import shutil
+    # Check PATH first
+    found = shutil.which(name)
+    if found:
+        return found
+    # Windows: check standard install locations
+    if IS_WINDOWS:
+        candidates = [
+            os.path.join(r"C:\Program Files\WireGuard", name),
+            os.path.join(r"C:\Program Files\WireGuard", name + ".exe"),
+            os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"), "WireGuard", name),
+            os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"), "WireGuard", name + ".exe"),
+        ]
+        for c in candidates:
+            if os.path.isfile(c):
+                return c
+    return name  # Return as-is, let subprocess handle FileNotFoundError
+
+_WG_BIN = None
+_WIREGUARD_BIN = None
+
+def _wg_cmd() -> str:
+    """Retourne le chemin vers wg(.exe)"""
+    global _WG_BIN
+    if _WG_BIN is None:
+        _WG_BIN = _wg_find_binary("wg")
+    return _WG_BIN
+
+def _wireguard_cmd() -> str:
+    """Retourne le chemin vers wireguard(.exe)"""
+    global _WIREGUARD_BIN
+    if _WIREGUARD_BIN is None:
+        _WIREGUARD_BIN = _wg_find_binary("wireguard")
+    return _WIREGUARD_BIN
+
 def _wg_genkey_python() -> tuple:
     """Génère une paire de clés WireGuard en pur Python via X25519 (fallback sans wg CLI)"""
     try:
@@ -1692,11 +1729,11 @@ def _wg_genpsk_python() -> str:
 def _wg_genkey() -> tuple:
     """Génère une paire de clés WireGuard (privkey, pubkey) — essaie wg CLI puis fallback Python"""
     try:
-        result = _subprocess.run(["wg", "genkey"], capture_output=True, text=True, timeout=5)
+        result = _subprocess.run([_wg_cmd(), "genkey"], capture_output=True, text=True, timeout=5)
         privkey = result.stdout.strip()
         if not privkey:
             raise ValueError("wg genkey returned empty")
-        result2 = _subprocess.run(["wg", "pubkey"], input=privkey, capture_output=True, text=True, timeout=5)
+        result2 = _subprocess.run([_wg_cmd(), "pubkey"], input=privkey, capture_output=True, text=True, timeout=5)
         pubkey = result2.stdout.strip()
         if not pubkey:
             raise ValueError("wg pubkey returned empty")
@@ -1802,7 +1839,7 @@ def wg_add_peer(name: str) -> dict:
         return {"error": "Plus d'adresses IP disponibles"}
     # Generate preshared key (wg CLI or Python fallback)
     try:
-        psk_result = _subprocess.run(["wg", "genpsk"], capture_output=True, text=True, timeout=5)
+        psk_result = _subprocess.run([_wg_cmd(), "genpsk"], capture_output=True, text=True, timeout=5)
         psk = psk_result.stdout.strip()
         if not psk:
             psk = _wg_genpsk_python()
@@ -1851,7 +1888,7 @@ def wg_remove_peer(name: str) -> dict:
     # If WG is running, remove peer live
     if WG_STATUS.get("running"):
         try:
-            _subprocess.run(["wg", "set", CFG.wg_interface, "peer", peer["pubkey"], "remove"],
+            _subprocess.run([_wg_cmd(), "set", CFG.wg_interface, "peer", peer["pubkey"], "remove"],
                            capture_output=True, timeout=10)
         except Exception:
             pass
@@ -1864,17 +1901,45 @@ def wg_start() -> dict:
     if not WG_SERVER_PRIVKEY:
         _wg_init_server()
     config_path = _wg_generate_server_config()
+    abs_config = os.path.abspath(config_path)
     try:
         if IS_LINUX:
-            _subprocess.run(["wg-quick", "up", config_path], capture_output=True, text=True, timeout=15)
+            result = _subprocess.run(["wg-quick", "up", abs_config],
+                                    capture_output=True, text=True, timeout=15)
         elif IS_WINDOWS:
-            # Windows: wireguard.exe /installtunnelservice
-            _subprocess.run(["wireguard.exe", "/installtunnelservice", config_path],
-                          capture_output=True, text=True, timeout=15)
-        WG_STATUS["running"] = True
-        WG_STATUS["interface"] = CFG.wg_interface
-        log.info(f"[WG] Tunnel {CFG.wg_interface} démarré")
-        return {"ok": True, "status": "started"}
+            # Windows: wireguard.exe /installtunnelservice needs admin rights
+            result = _subprocess.run([_wireguard_cmd(), "/installtunnelservice", abs_config],
+                                    capture_output=True, text=True, timeout=15)
+        else:
+            return {"error": "OS non supporté pour WireGuard"}
+
+        if result.returncode != 0:
+            stderr = result.stderr.strip() or result.stdout.strip()
+            if "access" in stderr.lower() or "denied" in stderr.lower() or "privilege" in stderr.lower():
+                msg = "Droits administrateur requis. Lance NetGuard en tant qu'Administrateur pour démarrer le VPN."
+            else:
+                msg = f"Erreur WireGuard (code {result.returncode}): {stderr}"
+            log.error(f"[WG] {msg}")
+            return {"error": msg}
+
+        # Verify tunnel is actually up (give it a moment)
+        import time
+        time.sleep(1)
+        verify = _subprocess.run([_wg_cmd(), "show", CFG.wg_interface],
+                                capture_output=True, text=True, timeout=5)
+        if verify.returncode == 0:
+            WG_STATUS["running"] = True
+            WG_STATUS["interface"] = CFG.wg_interface
+            WG_STATUS["not_installed"] = False
+            log.info(f"[WG] Tunnel {CFG.wg_interface} démarré et vérifié")
+            return {"ok": True, "status": "started"}
+        else:
+            # Command ran but tunnel not active — likely needs admin
+            WG_STATUS["running"] = False
+            msg = "Le tunnel n'a pas démarré. Lance NetGuard en tant qu'Administrateur (clic droit → Exécuter en admin)."
+            log.warning(f"[WG] {msg}")
+            return {"error": msg}
+
     except FileNotFoundError:
         msg = "WireGuard non installé. "
         if IS_WINDOWS:
@@ -1895,7 +1960,7 @@ def wg_stop() -> dict:
         if IS_LINUX:
             _subprocess.run(["wg-quick", "down", config_path], capture_output=True, text=True, timeout=15)
         elif IS_WINDOWS:
-            _subprocess.run(["wireguard.exe", "/uninstalltunnelservice", CFG.wg_interface],
+            _subprocess.run([_wireguard_cmd(), "/uninstalltunnelservice", CFG.wg_interface],
                           capture_output=True, text=True, timeout=15)
         WG_STATUS["running"] = False
         WG_STATUS["peers_connected"] = 0
@@ -1915,7 +1980,7 @@ def wg_get_status() -> dict:
     """Récupère le statut du tunnel WireGuard"""
     global WG_STATUS
     try:
-        result = _subprocess.run(["wg", "show", CFG.wg_interface], capture_output=True, text=True, timeout=5)
+        result = _subprocess.run([_wg_cmd(), "show", CFG.wg_interface], capture_output=True, text=True, timeout=5)
         if result.returncode != 0:
             WG_STATUS["running"] = False
             return WG_STATUS
@@ -2927,12 +2992,12 @@ async def broadcast_state():
         if CLIENTS:
             msg = json.dumps(build_state_message())
             dead = set()
-            for ws in CLIENTS:
+            for ws in list(CLIENTS):  # Copy to avoid RuntimeError: Set changed size
                 try:
                     await ws.send(msg)
                 except Exception:
                     dead.add(ws)
-            CLIENTS = CLIENTS - dead
+            CLIENTS -= dead
 
 async def ws_handler(websocket):
     global CLIENTS
