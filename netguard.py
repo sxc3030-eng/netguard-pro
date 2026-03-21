@@ -2193,12 +2193,17 @@ def run_report(report_type: str, fmt: str, filter_status: str = "all") -> str:
                 writer.writerows(pkts)
     return str(path)
 
+_last_pkt_total = 0
+
 def snapshot_traffic():
+    global _last_pkt_total
     with STATE.lock:
+        pps = STATE.packets_total - _last_pkt_total
+        _last_pkt_total = STATE.packets_total
         STATE.traffic_history.append({
             "ts": time.time(), "in_bps": STATE.bytes_in,
             "out_bps": STATE.bytes_out, "blocked": STATE.packets_blocked,
-            "pps": STATE.packets_total,
+            "pps": pps,
         })
         STATE.bytes_in  = 0
         STATE.bytes_out = 0

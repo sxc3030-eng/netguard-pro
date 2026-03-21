@@ -1810,10 +1810,15 @@ function render(s) {
     else if(diff < 0) { el.textContent = '▼ -' + pct + '%'; el.className = 'kpi-trend ' + (invert?'up':'down'); }
     else { el.textContent = '— 0%'; el.className = 'kpi-trend neutral'; }
   };
-  const curPPS = s.packets_per_second || 0;
-  const curBlocked = s.total_blocked || 0;
-  const curThreats = s.threats ? s.threats.length : 0;
-  const curConns = s.active_connections || 0;
+  const curPPS = lastSnap ? lastSnap.pps : 0;
+  const curBlocked = s.packets_blocked || 0;
+  const curThreats = s.threats_count || 0;
+  const curConns = s.active_conns || 0;
+  // Threat sub-detail
+  if(s.threats) {
+    const crit = s.threats.filter(t => t.severity === 'critical').length;
+    setText('m-threat-sub', crit + ' critical');
+  }
   trendEl('kpi-trend-pps', curPPS, prevKPI.pps, false);
   trendEl('kpi-trend-blocked', curBlocked, prevKPI.blocked, true);
   trendEl('kpi-trend-threats', curThreats, prevKPI.threats, true);
@@ -1949,21 +1954,19 @@ function render(s) {
     const el = document.getElementById('dash-attack-chains');
     if(el) {
       const chains = Object.entries(s.attack_chains || {});
-      el.innerHTML = chains.slice(0,5).map(([ip,c]) =>
-        '<div style="padding:4px 6px;background:var(--bg3);border-radius:4px"><span style="color:var(--purple)">'+ip+'</span> <span style="color:var(--text3)">'+c.phases.join(' → ')+'</span></div>'
-      ).join('') || '<div style="color:var(--text3);text-align:center;padding:20px">No chains</div>';
+      el.innerHTML = chains.slice(0,5).map(([ip,steps]) => {
+        const phases = Array.isArray(steps) ? steps.map(s => s.phase || s).join(' → ') : '';
+        return '<div style="padding:4px 6px;background:var(--bg3);border-radius:4px"><span style="color:var(--purple)">'+ip+'</span> <span style="color:var(--text3)">'+phases+'</span></div>';
+      }).join('') || '<div style="color:var(--text3);text-align:center;padding:20px">No chains</div>';
     }
   }
-  // Protocol distribution bars
-  if(s.protocol_stats) {
+  // Protocol distribution bars (proto_stats is array [{name,count,pct}])
+  if(s.proto_stats && s.proto_stats.length) {
     const el = document.getElementById('dash-proto-bars');
     if(el) {
-      const total = Object.values(s.protocol_stats).reduce((a,b) => a+b, 0) || 1;
-      const sorted = Object.entries(s.protocol_stats).sort((a,b) => b[1]-a[1]).slice(0,6);
       const colors = ['#4d9fff','#3dffb4','#ffb347','#b47dff','#ff4d6a','#00d4ff'];
-      el.innerHTML = sorted.map(([proto,cnt], i) => {
-        const pct = Math.round(cnt/total*100);
-        return '<div style="display:flex;align-items:center;gap:8px;font-size:11px"><span style="width:40px;color:var(--text2)">'+proto+'</span><div style="flex:1;height:16px;background:var(--bg4);border-radius:3px;overflow:hidden"><div style="height:100%;width:'+pct+'%;background:'+colors[i%6]+';border-radius:3px;transition:width .5s"></div></div><span style="width:35px;text-align:right;color:var(--text3)">'+pct+'%</span></div>';
+      el.innerHTML = s.proto_stats.slice(0,6).map((p, i) => {
+        return '<div style="display:flex;align-items:center;gap:8px;font-size:11px"><span style="width:40px;color:var(--text2)">'+p.name+'</span><div style="flex:1;height:16px;background:var(--bg4);border-radius:3px;overflow:hidden"><div style="height:100%;width:'+p.pct+'%;background:'+colors[i%6]+';border-radius:3px;transition:width .5s"></div></div><span style="width:35px;text-align:right;color:var(--text3)">'+p.pct+'%</span></div>';
       }).join('');
     }
   }
