@@ -387,8 +387,8 @@ tr:hover td{background:var(--bg4)22}
               <button class="popout-btn" onclick="popout('traffic')" title="Expand">⤢</button>
             </div>
           </div>
-          <div class="kibana-panel-body" style="padding:8px">
-            <canvas id="traffic-canvas" height="200" style="width:100%;border-radius:4px"></canvas>
+          <div class="kibana-panel-body" style="padding:8px;min-height:200px">
+            <canvas id="traffic-canvas" style="width:100%;height:180px;border-radius:4px"></canvas>
             <div style="display:flex;gap:16px;justify-content:center;margin-top:6px;font-size:10px">
               <span style="color:#3dffb4">● In</span>
               <span style="color:#4d9fff">● Out</span>
@@ -414,8 +414,8 @@ tr:hover td{background:var(--bg4)22}
             <span class="kibana-panel-title">Performance</span>
             <div class="kibana-panel-icons"><button class="popout-btn" onclick="popout('perf')" title="Expand">⤢</button></div>
           </div>
-          <div class="kibana-panel-body" style="padding:8px">
-            <canvas id="perf-chart" height="180" style="width:100%;border-radius:4px"></canvas>
+          <div class="kibana-panel-body" style="padding:8px;min-height:200px">
+            <canvas id="perf-chart" style="width:100%;height:180px;border-radius:4px"></canvas>
           </div>
         </div>
         <div class="kibana-panel span-4">
@@ -2035,7 +2035,7 @@ function drawTraffic() {
   const c = document.getElementById('traffic-canvas');
   if (!c) return;
   const ctx = c.getContext('2d');
-  c.width = c.offsetWidth; c.height = Math.max(c.offsetHeight, 160);
+  c.width = c.offsetWidth || 600; c.height = 180;
   const W = c.width, H = c.height;
   ctx.clearRect(0,0,W,H);
   function line(data, color, fill) {
@@ -2763,6 +2763,28 @@ const T = {
   // Audit tab
   audit_title:    {fr:"Log d'audit — Actions des utilisateurs",en:'Audit Log — User Actions',es:'Registro de auditoría — Acciones de usuarios',de:'Audit-Protokoll — Benutzeraktionen'},
   btn_export:     {fr:'📄 Exporter',en:'📄 Export',es:'📄 Exportar',de:'📄 Exportieren'},
+  // v3.0 — Kibana Dashboard Panels
+  dash_pps:            {fr:'Paquets / sec',en:'Packets / sec',es:'Paquetes / seg',de:'Pakete / Sek'},
+  dash_throughput:     {fr:'Débit',en:'Throughput',es:'Rendimiento',de:'Durchsatz'},
+  dash_blocked:        {fr:'Bloqués',en:'Blocked',es:'Bloqueados',de:'Blockiert'},
+  dash_block_rate:     {fr:'Taux de blocage',en:'Block Rate',es:'Tasa de bloqueo',de:'Blockierungsrate'},
+  dash_threats_title:  {fr:'Menaces',en:'Threats',es:'Amenazas',de:'Bedrohungen'},
+  dash_detected:       {fr:'Détectées',en:'Detected',es:'Detectadas',de:'Erkannt'},
+  dash_connections:    {fr:'Connexions',en:'Connections',es:'Conexiones',de:'Verbindungen'},
+  dash_active:         {fr:'Actives',en:'Active',es:'Activas',de:'Aktiv'},
+  dash_traffic:        {fr:'Trafic réseau',en:'Network Traffic',es:'Tráfico de red',de:'Netzwerkverkehr'},
+  dash_attack_dist:    {fr:'Distribution des attaques',en:'Attack Distribution',es:'Distribución de ataques',de:'Angriffsverteilung'},
+  dash_geo:            {fr:'Attaques Geo-IP',en:'Geo-IP Attacks',es:'Ataques Geo-IP',de:'Geo-IP Angriffe'},
+  dash_proto:          {fr:'Protocoles',en:'Protocols',es:'Protocolos',de:'Protokolle'},
+  dash_top_ips:        {fr:'Top IPs menaçantes',en:'Top Threatening IPs',es:'IPs amenazantes principales',de:'Top bedrohliche IPs'},
+  dash_recent_threats: {fr:'Menaces récentes',en:'Recent Threats',es:'Amenazas recientes',de:'Aktuelle Bedrohungen'},
+  dash_chains:         {fr:'Chaînes d\'attaque',en:'Attack Chains',es:'Cadenas de ataque',de:'Angriffsketten'},
+  dash_anomalies:      {fr:'Anomalies',en:'Anomalies',es:'Anomalías',de:'Anomalien'},
+  dash_intel:          {fr:'Rens. sur menaces',en:'Threat Intel Hits',es:'Intel de amenazas',de:'Bedrohungsinfo'},
+  dash_lan:            {fr:'LAN & OS',en:'LAN & OS',es:'LAN y SO',de:'LAN & OS'},
+  dash_ids_rules:      {fr:'Règles IDS',en:'IDS Rules',es:'Reglas IDS',de:'IDS-Regeln'},
+  dash_blacklist:      {fr:'Blacklist',en:'Blacklist',es:'Lista negra',de:'Blacklist'},
+  dash_service:        {fr:'Service',en:'Service',es:'Servicio',de:'Dienst'},
   // v3.0 — Advanced Security
   nav_advanced: {fr:'Sécurité avancée', en:'Advanced Security', es:'Seguridad avanzada', de:'Erweiterte Sicherheit'},
   nav_anomaly: {fr:'Détection d\'anomalies', en:'Anomaly Detection', es:'Detección de anomalías', de:'Anomalie-Erkennung'},
