@@ -3,8 +3,47 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>NetGuard Pro — Protection réseau avancée pour entreprises</title>
-<meta name="description" content="NetGuard Pro surveille, détecte et bloque les menaces réseau en temps réel. IDS, DPI, Géoblocage, Honeypot, Alertes email. Open source.">
+<title>NetGuard Pro — Suite de cybersécurité complète | IDS, Firewall, VPN, SOAR</title>
+<meta name="description" content="NetGuard Pro v3.0 : 15 outils de cybersécurité. IDS Suricata, Firewall, VPN WireGuard, Antimalware, Honeypot, SOAR, Forensique. Gratuit ou Pro dès 29$/mois.">
+<meta name="keywords" content="cybersécurité, IDS, firewall, VPN, WireGuard, antimalware, honeypot, SOAR, réseau, protection, NetGuard Pro, sécurité informatique, détection intrusions, DPI, geoblocage">
+<meta name="author" content="NetGuard Pro">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://sxc3030-eng.github.io/netguard-pro/">
+
+<!-- Open Graph / Facebook -->
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://sxc3030-eng.github.io/netguard-pro/">
+<meta property="og:title" content="NetGuard Pro — Suite de cybersécurité complète">
+<meta property="og:description" content="15 outils de cybersécurité : IDS, Firewall, VPN, Antimalware, Honeypot, SOAR, Forensique. Gratuit ou Pro dès 29$/mois.">
+<meta property="og:image" content="https://sxc3030-eng.github.io/netguard-pro/screenshots/netguard_dashboard.png">
+<meta property="og:locale" content="fr_CA">
+<meta property="og:site_name" content="NetGuard Pro">
+
+<!-- Twitter -->
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="NetGuard Pro — Suite de cybersécurité complète">
+<meta name="twitter:description" content="15 outils de cybersécurité : IDS, Firewall, VPN, Antimalware, Honeypot, SOAR, Forensique.">
+<meta name="twitter:image" content="https://sxc3030-eng.github.io/netguard-pro/screenshots/netguard_dashboard.png">
+
+<!-- Structured Data -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "NetGuard Pro",
+  "applicationCategory": "SecurityApplication",
+  "operatingSystem": "Windows, Linux",
+  "offers": [
+    {"@type": "Offer", "price": "0", "priceCurrency": "USD", "name": "Gratuit"},
+    {"@type": "Offer", "price": "29", "priceCurrency": "USD", "name": "Pro"},
+    {"@type": "Offer", "price": "99", "priceCurrency": "USD", "name": "Enterprise"}
+  ],
+  "description": "Suite de cybersécurité complète : 15 outils incluant IDS, Firewall, VPN WireGuard, Antimalware, Honeypot, SOAR et Forensique.",
+  "url": "https://sxc3030-eng.github.io/netguard-pro/",
+  "downloadUrl": "https://github.com/sxc3030-eng/netguard-pro",
+  "softwareVersion": "3.0.0"
+}
+</script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500&display=swap');
 *{box-sizing:border-box;margin:0;padding:0}
@@ -145,7 +184,7 @@ footer{border-top:1px solid var(--border);padding:40px;display:flex;justify-cont
 <!-- Stats -->
 <div class="stats">
   <div class="stat">
-    <div class="stat-num">9</div>
+    <div class="stat-num">15</div>
     <div class="stat-lbl">Applications</div>
   </div>
   <div class="stat">
@@ -468,7 +507,8 @@ footer{border-top:1px solid var(--border);padding:40px;display:flex;justify-cont
       <div class="price-feature">API REST complète</div>
       <div class="price-feature">Support prioritaire</div>
       <div class="price-feature">Mises à jour automatiques</div>
-      <a href="netguard_login.html" class="price-btn">Commencer →</a>
+      <div id="paypal-btn-pro" style="margin-top:12px"></div>
+      <a href="netguard_checkout.html?plan=pro" class="price-btn">Acheter Pro →</a>
     </div>
 
     <div class="price-card">
@@ -482,9 +522,11 @@ footer{border-top:1px solid var(--border);padding:40px;display:flex;justify-cont
       <div class="price-feature">Intégration SIEM</div>
       <div class="price-feature">Support dédié 24/7</div>
       <div class="price-feature">Formation incluse</div>
-      <a href="mailto:contact@netguardpro.com" class="price-btn">Nous contacter →</a>
+      <div id="paypal-btn-ent" style="margin-top:12px"></div>
+      <a href="netguard_checkout.html?plan=enterprise" class="price-btn">Acheter Enterprise →</a>
     </div>
   </div>
+  <p style="text-align:center;margin-top:20px;font-size:13px;color:var(--text3)">Paiement sécurisé via PayPal. Essai gratuit 30 jours — annulez à tout moment.</p>
 </section>
 
 <!-- CTA -->
