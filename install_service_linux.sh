@@ -31,14 +31,24 @@ echo " [..] Copie vers $INSTALL_DIR..."
 mkdir -p "$INSTALL_DIR"
 cp -r "$SOURCE_DIR"/*.py "$INSTALL_DIR/" 2>/dev/null || true
 cp -r "$SOURCE_DIR"/*.html "$INSTALL_DIR/" 2>/dev/null || true
-cp -r "$SOURCE_DIR"/*.bat "$INSTALL_DIR/" 2>/dev/null || true
+cp -r "$SOURCE_DIR"/*.json "$INSTALL_DIR/" 2>/dev/null || true
+cp -r "$SOURCE_DIR"/*.sh "$INSTALL_DIR/" 2>/dev/null || true
+# Copy all sub-modules
+for mod in wireguard mailshield cleanguard sentinel vpnguard honeypot fim recorder strikeback; do
+    if [ -d "$SOURCE_DIR/$mod" ]; then
+        cp -r "$SOURCE_DIR/$mod" "$INSTALL_DIR/"
+        echo "   [OK] Module: $mod"
+    fi
+done
 mkdir -p "$INSTALL_DIR/captures"
 mkdir -p "$INSTALL_DIR/reports"
-echo " [OK] Fichiers copiés"
+mkdir -p "$INSTALL_DIR/backups"
+echo " [OK] Fichiers et modules copiés"
 
 # Installer les dépendances
 echo " [..] Installation des dépendances..."
-pip3 install scapy websockets --break-system-packages 2>/dev/null || pip3 install scapy websockets
+pip3 install scapy websockets cryptography Pillow --break-system-packages 2>/dev/null \
+    || pip3 install scapy websockets cryptography Pillow
 echo " [OK] Dépendances installées"
 
 # Créer le fichier service systemd

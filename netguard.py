@@ -2,7 +2,7 @@
 NetGuard Pro - Moteur de surveillance réseau
 Capture, analyse et bloque les paquets en temps réel
 Auteur: NetGuard Pro
-Version: 3.0.0
+Version: 4.0.0
 Usage: python netguard.py [--interface eth0] [--port 8765] [--no-block]
 """
 
@@ -25,6 +25,12 @@ import os
 import sys
 import hashlib
 import base64
+
+# Fix pythonw (no console) — redirect None stdout/stderr to devnull
+if sys.stdout is None:
+    sys.stdout = open(os.devnull, 'w')
+if sys.stderr is None:
+    sys.stderr = open(os.devnull, 'w')
 
 # Fix Windows console encoding
 if sys.platform == 'win32':
@@ -51,6 +57,18 @@ try:
 except ImportError:
     HAS_SCAPY = False
     print("[WARN] scapy non installé. Installe avec: pip install scapy")
+
+try:
+    import webview
+    HAS_WEBVIEW = True
+except ImportError:
+    HAS_WEBVIEW = False
+
+try:
+    from startup_utils import is_startup_enabled, toggle_startup as toggle_startup_reg, get_all_startup_states, minimize_to_tray
+    HAS_STARTUP_UTILS = True
+except ImportError:
+    HAS_STARTUP_UTILS = False
 
 IS_WINDOWS = platform.system() == "Windows"
 IS_LINUX   = platform.system() == "Linux"
@@ -325,6 +343,46 @@ def _fetch_abuseipdb(ip: str):
     except Exception:
         pass
 
+# Country center coordinates for fallback when async geo fetch hasn't completed
+_COUNTRY_COORDS = {
+    "AF":(69.2,34.5),"AL":(19.8,41.3),"DZ":(3.0,36.8),"AR":(-64.0,-34.6),
+    "AU":(133.8,-25.3),"AT":(14.6,47.5),"BD":(90.4,23.7),"BE":(4.4,50.8),
+    "BR":(-51.9,-14.2),"BG":(25.5,42.7),"CA":(-106.3,56.1),"CL":(-71.5,-35.7),
+    "CN":(104.2,35.9),"CO":(-74.3,4.6),"CZ":(15.5,49.8),"DK":(9.5,56.3),
+    "EG":(30.8,26.8),"FI":(25.7,61.9),"FR":(2.2,46.2),"DE":(10.5,51.2),
+    "GR":(21.8,39.1),"HK":(114.1,22.4),"HU":(19.5,47.2),"IN":(78.9,20.6),
+    "ID":(113.9,-0.8),"IR":(53.7,32.4),"IQ":(44.0,33.2),"IE":(-8.2,53.4),
+    "IL":(34.9,31.0),"IT":(12.6,41.9),"JP":(138.3,36.2),"KZ":(66.9,48.0),
+    "KE":(37.9,0.0),"KR":(128.0,35.9),"MY":(101.7,4.2),"MX":(-102.6,23.6),
+    "MA":(-7.1,31.8),"NL":(5.3,52.1),"NZ":(174.9,-40.9),"NG":(8.7,9.1),
+    "NO":(8.5,60.5),"PK":(69.3,30.4),"PH":(122.0,12.9),"PL":(19.1,51.9),
+    "PT":(-8.2,39.4),"RO":(24.7,45.9),"RU":(105.3,61.5),"SA":(45.1,23.9),
+    "SG":(103.8,1.4),"ZA":(22.9,-30.6),"ES":(-3.7,40.5),"SE":(18.6,60.1),
+    "CH":(8.2,46.8),"TW":(121.0,23.7),"TH":(100.5,15.9),"TR":(35.2,38.9),
+    "UA":(31.2,48.4),"AE":(54.0,23.4),"GB":(-3.4,55.4),"US":(-98.0,39.5),
+    "VN":(105.8,21.0),"VE":(-66.9,10.5),
+}
+
+def _get_ip_coords(ip: str, country: str = None):
+    """Get lat/lon for an IP. Uses geo cache first, then country fallback with jitter."""
+    geo = _geo_city_cache.get(ip, {})
+    lat = geo.get("latitude")
+    lon = geo.get("longitude")
+    if lat is not None and lon is not None:
+        return lat, lon
+    # Fallback: country center + deterministic jitter
+    cc = country or geo.get("country") or get_country(ip) or ""
+    if cc and cc in _COUNTRY_COORDS:
+        clon, clat = _COUNTRY_COORDS[cc]
+        parts = ip.split(".")
+        try:
+            ox = ((int(parts[2])*17 + int(parts[3])*31) % 100) / 100 * 10 - 5
+            oy = ((int(parts[2])*13 + int(parts[3])*7) % 100) / 100 * 6 - 3
+        except (IndexError, ValueError):
+            ox, oy = 0, 0
+        return clat + oy, clon + ox
+    return None, None
+
 def get_country(ip: str) -> Optional[str]:
     if is_private(ip):
         return None
@@ -565,6 +623,9 @@ _ATTACK_PATTERNS = [
 SURICATA_ENABLED: bool = True
 SURICATA_RULES:   list = []   # liste de dicts {sid, msg, pattern, proto, action}
 SURICATA_LOADED:  int  = 0    # nb de règles chargées
+SURICATA_RULE_HITS: dict = defaultdict(int)   # compteur de hits par SID
+SURICATA_DISABLED_SIDS: set = set()           # SIDs désactivés individuellement
+SURICATA_CUSTOM_RULES: list = []              # règles personnalisées (persistées)
 
 ET_RULESETS = {
     "et_scan":    "https://rules.emergingthreats.net/open/suricata-5.0/rules/emerging-scan.rules",
@@ -720,12 +781,16 @@ def suricata_match(src_ip: str, payload: bytes, proto: str) -> list:
         return []
     hits = []
     for rule in SURICATA_RULES:
+        sid = rule.get("sid", 0)
+        if sid in SURICATA_DISABLED_SIDS:
+            continue
         if rule.get("proto", "TCP") not in (proto, "ANY"):
             continue
         try:
             if rule["pattern"].search(payload):
+                SURICATA_RULE_HITS[sid] += 1
                 hits.append({
-                    "sid":      rule["sid"],
+                    "sid":      sid,
                     "msg":      rule["msg"],
                     "severity": rule["severity"],
                     "action":   rule["action"],
@@ -734,10 +799,591 @@ def suricata_match(src_ip: str, payload: bytes, proto: str) -> list:
             pass
     return hits
 
+def suricata_add_custom_rule(msg: str, pattern_str: str, proto: str = "TCP",
+                              severity: str = "high", action: str = "alert") -> dict:
+    """Ajoute une règle personnalisée"""
+    global SURICATA_LOADED
+    try:
+        sid = 9900000 + len(SURICATA_CUSTOM_RULES) + 1
+        pattern = re.compile(pattern_str.encode() if isinstance(pattern_str, str) else pattern_str,
+                            re.DOTALL | re.IGNORECASE)
+        rule = {
+            "sid": sid, "msg": msg, "pattern": pattern,
+            "proto": proto.upper(), "action": action, "severity": severity,
+            "custom": True, "pattern_str": pattern_str,
+        }
+        SURICATA_RULES.append(rule)
+        SURICATA_CUSTOM_RULES.append({
+            "sid": sid, "msg": msg, "pattern_str": pattern_str,
+            "proto": proto.upper(), "action": action, "severity": severity,
+        })
+        SURICATA_LOADED = len(SURICATA_RULES)
+        log.info(f"[SURICATA] Règle custom ajoutée: SID {sid} — {msg}")
+        return {"ok": True, "sid": sid}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+def suricata_delete_rule(sid: int) -> dict:
+    """Supprime une règle (custom uniquement)"""
+    global SURICATA_LOADED
+    SURICATA_RULES[:] = [r for r in SURICATA_RULES if r.get("sid") != sid]
+    SURICATA_CUSTOM_RULES[:] = [r for r in SURICATA_CUSTOM_RULES if r.get("sid") != sid]
+    SURICATA_LOADED = len(SURICATA_RULES)
+    return {"ok": True}
+
+def suricata_get_rules_list() -> list:
+    """Retourne toutes les règles avec hits et statut"""
+    rules = []
+    for r in SURICATA_RULES:
+        sid = r.get("sid", 0)
+        rules.append({
+            "sid": sid,
+            "msg": r.get("msg", ""),
+            "proto": r.get("proto", "TCP"),
+            "severity": r.get("severity", "med"),
+            "action": r.get("action", "alert"),
+            "hits": SURICATA_RULE_HITS.get(sid, 0),
+            "enabled": sid not in SURICATA_DISABLED_SIDS,
+            "custom": r.get("custom", False),
+        })
+    return rules
+
 # Charger les règles intégrées au démarrage
 SURICATA_RULES = _compile_builtin_rules()
 SURICATA_LOADED = len(SURICATA_RULES)
 print(f"[SURICATA] {SURICATA_LOADED} règles intégrées chargées")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# v4.0 — NEW MODULES: Vulnerability / Backup / Incidents / Training / NAC / IAM
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ─── Vulnerability Scanner ────────────────────────────────────────────────────
+VULN_SCAN_HISTORY = deque(maxlen=50)
+
+def vuln_scan_ports(target: str, port_range: str = "1-1024") -> dict:
+    """Scan TCP ports on a target"""
+    import socket
+    open_ports = []
+    try:
+        parts = port_range.split("-")
+        start = int(parts[0])
+        end = int(parts[1]) if len(parts) > 1 else start
+        end = min(end, 65535)
+        start = max(start, 1)
+    except Exception:
+        start, end = 1, 1024
+
+    KNOWN_SERVICES = {
+        21: "FTP", 22: "SSH", 23: "Telnet", 25: "SMTP", 53: "DNS",
+        80: "HTTP", 110: "POP3", 143: "IMAP", 443: "HTTPS", 445: "SMB",
+        993: "IMAPS", 995: "POP3S", 1433: "MSSQL", 3306: "MySQL",
+        3389: "RDP", 5432: "PostgreSQL", 5900: "VNC", 6379: "Redis",
+        8080: "HTTP-Alt", 8443: "HTTPS-Alt", 27017: "MongoDB",
+    }
+    VULN_PORTS = {
+        21: "FTP anonymous access possible",
+        23: "Telnet unencrypted protocol",
+        445: "SMB exposed (WannaCry, EternalBlue risk)",
+        3389: "RDP exposed (BlueKeep risk)",
+        5900: "VNC exposed (often unencrypted)",
+        6379: "Redis exposed (usually no auth)",
+        27017: "MongoDB exposed (usually no auth)",
+    }
+
+    scanned = 0
+    for port in range(start, end + 1):
+        scanned += 1
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(0.3)
+            result = sock.connect_ex((target, port))
+            if result == 0:
+                service = KNOWN_SERVICES.get(port, "unknown")
+                vuln = VULN_PORTS.get(port, "")
+                open_ports.append({
+                    "port": port,
+                    "service": service,
+                    "state": "open",
+                    "vulnerability": vuln,
+                    "risk": "high" if vuln else "info",
+                })
+            sock.close()
+        except Exception:
+            pass
+
+    scan_result = {
+        "ok": True,
+        "target": target,
+        "open_ports": open_ports,
+        "scanned": scanned,
+        "timestamp": datetime.now().isoformat(),
+    }
+    VULN_SCAN_HISTORY.appendleft(scan_result)
+    log.info(f"[VULN] Port scan {target}: {len(open_ports)} open ports / {scanned} scanned")
+    return scan_result
+
+def vuln_cve_lookup(cve_id: str) -> dict:
+    """Lookup CVE from NIST NVD API"""
+    import urllib.request
+    try:
+        url = f"https://services.nvd.nist.gov/rest/json/cves/2.0?cveId={cve_id}"
+        req = urllib.request.Request(url, headers={"User-Agent": "NetGuardPro/4.0"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            data = json.loads(r.read().decode())
+        if data.get("vulnerabilities"):
+            vuln = data["vulnerabilities"][0]["cve"]
+            desc = ""
+            for d in vuln.get("descriptions", []):
+                if d.get("lang") == "en":
+                    desc = d.get("value", "")
+                    break
+            metrics = vuln.get("metrics", {})
+            score = ""
+            severity = ""
+            for k in ["cvssMetricV31", "cvssMetricV30", "cvssMetricV2"]:
+                if k in metrics and metrics[k]:
+                    score = metrics[k][0].get("cvssData", {}).get("baseScore", "")
+                    severity = metrics[k][0].get("cvssData", {}).get("baseSeverity", "")
+                    break
+            return {
+                "ok": True,
+                "id": vuln.get("id", cve_id),
+                "description": desc,
+                "score": score,
+                "severity": severity,
+                "published": vuln.get("published", ""),
+                "modified": vuln.get("lastModified", ""),
+                "references": [ref.get("url", "") for ref in vuln.get("references", [])[:5]],
+            }
+        return {"ok": False, "error": "CVE not found"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+def vuln_system_check() -> dict:
+    """Basic system security check"""
+    checks = []
+    import subprocess
+    _si = None
+    _cf = 0
+    if os.name == 'nt':
+        _si = subprocess.STARTUPINFO()
+        _si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        _si.wShowWindow = 0
+        _cf = subprocess.CREATE_NO_WINDOW
+
+    # Check firewall
+    try:
+        r = subprocess.run(["netsh", "advfirewall", "show", "allprofiles", "state"], capture_output=True, text=True, timeout=5, startupinfo=_si, creationflags=_cf)
+        fw_on = "ON" in r.stdout.upper()
+        checks.append({"check": "Windows Firewall", "status": "pass" if fw_on else "fail",
+                       "detail": "Enabled" if fw_on else "DISABLED - Enable immediately!"})
+    except Exception:
+        checks.append({"check": "Windows Firewall", "status": "unknown", "detail": "Could not check"})
+
+    # Check Windows Update
+    try:
+        r = subprocess.run(["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", "(Get-HotFix | Sort-Object InstalledOn -Descending | Select-Object -First 1).InstalledOn"], capture_output=True, text=True, timeout=10, startupinfo=_si, creationflags=_cf)
+        last_update = r.stdout.strip()
+        checks.append({"check": "Last Windows Update", "status": "info", "detail": last_update or "Unknown"})
+    except Exception:
+        checks.append({"check": "Last Windows Update", "status": "unknown", "detail": "Could not check"})
+
+    # Check antivirus
+    try:
+        r = subprocess.run(["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", "Get-MpComputerStatus | Select-Object RealTimeProtectionEnabled,AntivirusEnabled"], capture_output=True, text=True, timeout=10, startupinfo=_si, creationflags=_cf)
+        av_on = "True" in r.stdout
+        checks.append({"check": "Windows Defender", "status": "pass" if av_on else "warn",
+                       "detail": "Active" if av_on else "Real-time protection may be disabled"})
+    except Exception:
+        checks.append({"check": "Windows Defender", "status": "unknown", "detail": "Could not check"})
+
+    # Check open ports
+    try:
+        r = subprocess.run(["netstat", "-an"], capture_output=True, text=True, timeout=5, startupinfo=_si, creationflags=_cf)
+        listening = [l for l in r.stdout.splitlines() if "LISTENING" in l]
+        checks.append({"check": "Listening Ports", "status": "info", "detail": f"{len(listening)} ports listening"})
+    except Exception:
+        checks.append({"check": "Listening Ports", "status": "unknown", "detail": "Could not check"})
+
+    # Check RDP
+    try:
+        r = subprocess.run(["reg", "query", r"HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server", "/v", "fDenyTSConnections"], capture_output=True, text=True, timeout=5, startupinfo=_si, creationflags=_cf)
+        rdp_disabled = "0x1" in r.stdout
+        checks.append({"check": "Remote Desktop (RDP)", "status": "pass" if rdp_disabled else "warn",
+                       "detail": "Disabled" if rdp_disabled else "ENABLED - Consider disabling if not needed"})
+    except Exception:
+        checks.append({"check": "Remote Desktop (RDP)", "status": "unknown", "detail": "Could not check"})
+
+    # Check password policy
+    try:
+        r = subprocess.run(["net", "accounts"], capture_output=True, text=True, timeout=5, startupinfo=_si, creationflags=_cf)
+        checks.append({"check": "Password Policy", "status": "info", "detail": "Checked"})
+    except Exception:
+        pass
+
+    return {"ok": True, "checks": checks, "timestamp": datetime.now().isoformat()}
+
+
+# ─── Backup & Recovery ────────────────────────────────────────────────────────
+BACKUP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "backups")
+BACKUP_SCHEDULE = {"enabled": False, "interval_hours": 24, "last_backup": ""}
+
+def backup_create(name: str = "", include: list = None) -> dict:
+    """Create a backup of NetGuard Pro configuration"""
+    os.makedirs(BACKUP_DIR, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_name = name or f"netguard_backup_{ts}"
+    backup_path = os.path.join(BACKUP_DIR, f"{backup_name}.json")
+
+    backup_data = {
+        "version": "4.0.0",
+        "timestamp": datetime.now().isoformat(),
+        "name": backup_name,
+    }
+
+    if include is None:
+        include = ["settings", "rules", "blocked", "geo", "suricata"]
+
+    if "settings" in include:
+        try:
+            with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+                backup_data["settings"] = json.load(f)
+        except Exception:
+            backup_data["settings"] = {}
+
+    if "rules" in include:
+        backup_data["rules"] = {k: {"enabled": v["enabled"], "hits": v["hits"]} for k, v in RULES.items()}
+
+    if "blocked" in include:
+        backup_data["blocked_ips"] = list(BLOCKED_IPS)
+
+    if "geo" in include:
+        backup_data["geo_countries"] = list(GEO_BLOCKED_COUNTRIES)
+
+    if "suricata" in include:
+        backup_data["suricata_custom_rules"] = SURICATA_CUSTOM_RULES
+        backup_data["suricata_disabled_sids"] = list(SURICATA_DISABLED_SIDS)
+
+    try:
+        with open(backup_path, "w", encoding="utf-8") as f:
+            json.dump(backup_data, f, indent=2, ensure_ascii=False)
+        size = os.path.getsize(backup_path)
+        BACKUP_SCHEDULE["last_backup"] = datetime.now().isoformat()
+        log.info(f"[BACKUP] Created: {backup_path} ({size} bytes)")
+        return {"ok": True, "path": backup_path, "size": size, "name": backup_name}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+def backup_restore(filename: str) -> dict:
+    """Restore from a backup file"""
+    path = os.path.join(BACKUP_DIR, filename)
+    if not os.path.exists(path):
+        return {"ok": False, "error": "Backup file not found"}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        if "settings" in data:
+            with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+                json.dump(data["settings"], f, indent=2, ensure_ascii=False)
+
+        if "blocked_ips" in data:
+            BLOCKED_IPS.clear()
+            BLOCKED_IPS.update(data["blocked_ips"])
+
+        if "geo_countries" in data:
+            global GEO_BLOCKED_COUNTRIES
+            GEO_BLOCKED_COUNTRIES = set(data["geo_countries"])
+
+        load_settings()
+        log.info(f"[BACKUP] Restored: {filename}")
+        return {"ok": True, "restored": filename}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+def backup_list() -> list:
+    """List available backups"""
+    os.makedirs(BACKUP_DIR, exist_ok=True)
+    backups = []
+    for f in sorted(os.listdir(BACKUP_DIR), reverse=True):
+        if f.endswith(".json"):
+            path = os.path.join(BACKUP_DIR, f)
+            try:
+                size = os.path.getsize(path)
+                mtime = datetime.fromtimestamp(os.path.getmtime(path)).isoformat()
+                backups.append({"filename": f, "size": size, "date": mtime})
+            except Exception:
+                pass
+    return backups
+
+def backup_delete(filename: str) -> dict:
+    """Delete a backup file"""
+    path = os.path.join(BACKUP_DIR, filename)
+    if os.path.exists(path):
+        os.remove(path)
+        return {"ok": True}
+    return {"ok": False, "error": "File not found"}
+
+
+# ─── Incident Response / Ticketing ────────────────────────────────────────────
+INCIDENTS = []  # list of ticket dicts
+INCIDENT_COUNTER = 0
+
+def incident_create(title: str, description: str, severity: str = "medium",
+                    assigned_to: str = "", related_ip: str = "") -> dict:
+    global INCIDENT_COUNTER
+    INCIDENT_COUNTER += 1
+    ticket = {
+        "id": f"INC-{INCIDENT_COUNTER:04d}",
+        "title": title,
+        "description": description,
+        "severity": severity,
+        "status": "open",
+        "assigned_to": assigned_to,
+        "related_ip": related_ip,
+        "created_at": datetime.now().isoformat(),
+        "updated_at": datetime.now().isoformat(),
+        "notes": [],
+    }
+    INCIDENTS.insert(0, ticket)
+    log.info(f"[INCIDENT] Created: {ticket['id']} — {title}")
+    return ticket
+
+def incident_update(ticket_id: str, updates: dict) -> dict:
+    for t in INCIDENTS:
+        if t["id"] == ticket_id:
+            if "notes" in updates:
+                t["notes"].append({
+                    "text": updates["notes"],
+                    "timestamp": datetime.now().isoformat(),
+                })
+                del updates["notes"]
+            t.update(updates)
+            t["updated_at"] = datetime.now().isoformat()
+            return {"ok": True, "ticket": t}
+    return {"ok": False, "error": "Ticket not found"}
+
+def incident_list(status_filter: str = "") -> list:
+    if status_filter:
+        return [t for t in INCIDENTS if t["status"] == status_filter]
+    return INCIDENTS
+
+def incident_get(ticket_id: str) -> dict:
+    for t in INCIDENTS:
+        if t["id"] == ticket_id:
+            return t
+    return {}
+
+def incident_delete(ticket_id: str) -> dict:
+    global INCIDENTS
+    INCIDENTS = [t for t in INCIDENTS if t["id"] != ticket_id]
+    return {"ok": True}
+
+
+# ─── Training & Awareness ────────────────────────────────────────────────────
+TRAINING_MODULES = [
+    {
+        "id": "phishing_101",
+        "title": "Phishing Detection 101",
+        "description": "Learn to identify phishing emails, suspicious links, and social engineering attacks.",
+        "category": "email",
+        "difficulty": "beginner",
+        "duration_min": 15,
+        "questions": [
+            {"q": "What is the most common sign of a phishing email?", "options": ["Misspelled sender domain", "Blue text", "Long email", "Has images"], "correct": 0},
+            {"q": "A colleague sends you an urgent link to 'verify your password'. What should you do?", "options": ["Click immediately", "Forward to IT security", "Verify via another channel", "Delete and ignore"], "correct": 2},
+            {"q": "Which URL is likely a phishing attempt?", "options": ["https://google.com", "https://g00gle-security.com/verify", "https://mail.google.com", "https://accounts.google.com"], "correct": 1},
+            {"q": "What is 'spear phishing'?", "options": ["Mass email spam", "Targeted attack on specific person", "Fishing website", "Email with attachments"], "correct": 1},
+            {"q": "What should you check before clicking a link in an email?", "options": ["The font size", "Hover over to see actual URL", "The email length", "The sender's profile picture"], "correct": 1},
+        ],
+    },
+    {
+        "id": "password_security",
+        "title": "Password Security & MFA",
+        "description": "Best practices for creating strong passwords and using multi-factor authentication.",
+        "category": "access",
+        "difficulty": "beginner",
+        "duration_min": 10,
+        "questions": [
+            {"q": "Which is the strongest password?", "options": ["password123", "P@ssw0rd!", "correct-horse-battery-staple", "admin"], "correct": 2},
+            {"q": "How often should you change your password?", "options": ["Every day", "When there's a breach", "Never", "Every hour"], "correct": 1},
+            {"q": "What is MFA?", "options": ["Multiple File Access", "Multi-Factor Authentication", "Main Firewall Admin", "Managed File Archive"], "correct": 1},
+            {"q": "Which MFA method is most secure?", "options": ["SMS code", "Hardware security key", "Email code", "Security questions"], "correct": 1},
+            {"q": "Should you use the same password for multiple accounts?", "options": ["Yes, easier to remember", "Only for unimportant sites", "Never", "Only with MFA"], "correct": 2},
+        ],
+    },
+    {
+        "id": "social_engineering",
+        "title": "Social Engineering Defense",
+        "description": "Recognize and defend against social engineering tactics used by attackers.",
+        "category": "awareness",
+        "difficulty": "intermediate",
+        "duration_min": 20,
+        "questions": [
+            {"q": "What is pretexting?", "options": ["Writing code", "Creating false scenario to gain trust", "Sending spam", "Hacking passwords"], "correct": 1},
+            {"q": "A caller claims to be from IT and asks for your password. What do you do?", "options": ["Give it immediately", "Hang up and call IT directly", "Email your password instead", "Give a fake password"], "correct": 1},
+            {"q": "What is tailgating in security?", "options": ["Following someone through a secure door", "Sending follow-up emails", "Tracking someone online", "Using VPN"], "correct": 0},
+            {"q": "Which is a sign of a social engineering attack?", "options": ["Unusual urgency", "Proper grammar", "Known sender", "Normal request"], "correct": 0},
+            {"q": "What is baiting?", "options": ["Using malicious USB drives", "Email fishing", "Phone calls", "Web browsing"], "correct": 0},
+        ],
+    },
+    {
+        "id": "ransomware_defense",
+        "title": "Ransomware Prevention",
+        "description": "Learn to prevent, detect, and respond to ransomware attacks.",
+        "category": "malware",
+        "difficulty": "intermediate",
+        "duration_min": 15,
+        "questions": [
+            {"q": "What is the best defense against ransomware?", "options": ["Paying the ransom", "Regular backups", "Stronger passwords", "Faster internet"], "correct": 1},
+            {"q": "How does ransomware typically spread?", "options": ["Through Bluetooth", "Phishing emails with malicious attachments", "Through Wi-Fi signals", "Via printer"], "correct": 1},
+            {"q": "Should you pay the ransom if hit?", "options": ["Always", "Never recommended", "Only if cheap", "Wait a week"], "correct": 1},
+            {"q": "What file extension indicates a potentially dangerous attachment?", "options": [".pdf", ".exe", ".jpg", ".txt"], "correct": 1},
+            {"q": "What is the 3-2-1 backup rule?", "options": ["3 passwords, 2 emails, 1 phone", "3 copies, 2 media types, 1 offsite", "3 users, 2 admins, 1 root", "3 networks, 2 firewalls, 1 VPN"], "correct": 1},
+        ],
+    },
+    {
+        "id": "network_security",
+        "title": "Network Security Basics",
+        "description": "Understanding network threats, firewalls, VPNs, and secure configurations.",
+        "category": "network",
+        "difficulty": "advanced",
+        "duration_min": 20,
+        "questions": [
+            {"q": "What does a firewall do?", "options": ["Speeds up internet", "Filters network traffic", "Stores passwords", "Creates backups"], "correct": 1},
+            {"q": "What is a VPN used for?", "options": ["Blocking ads", "Encrypting network traffic", "Speeding up downloads", "Creating websites"], "correct": 1},
+            {"q": "What is a Man-in-the-Middle attack?", "options": ["Physical break-in", "Intercepting communications", "DDoS attack", "Brute force"], "correct": 1},
+            {"q": "Which port is commonly used for HTTPS?", "options": ["80", "443", "22", "3389"], "correct": 1},
+            {"q": "What does DNS stand for?", "options": ["Digital Network System", "Domain Name System", "Data Network Security", "Dynamic Node Service"], "correct": 1},
+        ],
+    },
+]
+
+TRAINING_SCORES = {}
+
+def training_submit_quiz(module_id: str, answers: dict) -> dict:
+    module = next((m for m in TRAINING_MODULES if m["id"] == module_id), None)
+    if not module:
+        return {"ok": False, "error": "Module not found"}
+
+    correct = 0
+    total = len(module["questions"])
+    details = []
+    for i, q in enumerate(module["questions"]):
+        user_answer = answers.get(str(i), -1)
+        is_correct = int(user_answer) == q["correct"]
+        if is_correct:
+            correct += 1
+        details.append({
+            "question": q["q"],
+            "correct": is_correct,
+            "user_answer": int(user_answer),
+            "correct_answer": q["correct"],
+        })
+
+    score = round((correct / total) * 100)
+    TRAINING_SCORES[module_id] = {
+        "score": score,
+        "correct": correct,
+        "total": total,
+        "passed": score >= 70,
+        "timestamp": datetime.now().isoformat(),
+    }
+
+    return {"ok": True, "score": score, "correct": correct, "total": total,
+            "passed": score >= 70, "details": details, "module_id": module_id}
+
+def training_phishing_sim(target_email: str) -> dict:
+    """Simulate a phishing test (local only, no actual email sent)"""
+    sim_id = f"SIM-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+    return {
+        "ok": True,
+        "sim_id": sim_id,
+        "message": "Phishing simulation created (local mode — no actual email sent)",
+        "target": target_email,
+        "template": "Password Reset Notification",
+    }
+
+
+# ─── NAC Enhanced ─────────────────────────────────────────────────────────────
+NAC_APPROVED = []   # [{"ip": ..., "mac": ..., "name": ..., "approved_at": ...}]
+NAC_DENIED = []     # [{"ip": ..., "mac": ..., "denied_at": ...}]
+NAC_PENDING = []    # [{"ip": ..., "mac": ..., "first_seen": ...}]
+NAC_POLICY = {"default_action": "allow", "require_approval": False, "mac_filter": False}
+
+def nac_approve_device(ip: str, mac: str, name: str = ""):
+    NAC_APPROVED.append({"ip": ip, "mac": mac, "name": name or ip, "approved_at": datetime.now().isoformat()})
+    NAC_PENDING[:] = [d for d in NAC_PENDING if d.get("ip") != ip]
+    NAC_DENIED[:] = [d for d in NAC_DENIED if d.get("ip") != ip]
+    log.info(f"[NAC] Device approved: {ip} ({mac})")
+
+def nac_deny_device(ip: str, mac: str):
+    NAC_DENIED.append({"ip": ip, "mac": mac, "denied_at": datetime.now().isoformat()})
+    NAC_PENDING[:] = [d for d in NAC_PENDING if d.get("ip") != ip]
+    NAC_APPROVED[:] = [d for d in NAC_APPROVED if d.get("ip") != ip]
+    log.info(f"[NAC] Device denied: {ip} ({mac})")
+
+
+# ─── IAM Enhanced ─────────────────────────────────────────────────────────────
+IAM_USERS = {}      # {username: {password_hash, role, email, mfa_enabled, created_at}}
+IAM_SESSIONS = {}   # {session_id: {username, ip, created_at}}
+IAM_ROLES = {
+    "admin":   {"permissions": ["all"]},
+    "analyst": {"permissions": ["read", "alerts", "reports", "threats"]},
+    "viewer":  {"permissions": ["read"]},
+}
+
+def iam_create_user(username: str, password: str, role: str = "viewer", email: str = "") -> dict:
+    if not username or not password:
+        return {"ok": False, "error": "Username and password required"}
+    if username in IAM_USERS:
+        return {"ok": False, "error": "User already exists"}
+    if role not in IAM_ROLES:
+        return {"ok": False, "error": f"Invalid role. Valid: {list(IAM_ROLES.keys())}"}
+    pw_hash = hashlib.sha256(password.encode()).hexdigest()
+    IAM_USERS[username] = {
+        "password_hash": pw_hash,
+        "role": role,
+        "email": email,
+        "mfa_enabled": False,
+        "mfa_secret": "",
+        "created_at": datetime.now().isoformat(),
+        "last_login": "",
+    }
+    log.info(f"[IAM] User created: {username} (role: {role})")
+    return {"ok": True, "username": username, "role": role}
+
+def iam_delete_user(username: str) -> dict:
+    if username in IAM_USERS:
+        del IAM_USERS[username]
+        return {"ok": True}
+    return {"ok": False, "error": "User not found"}
+
+def iam_list_users() -> list:
+    return [
+        {"username": u, "role": d["role"], "email": d.get("email", ""),
+         "mfa_enabled": d.get("mfa_enabled", False),
+         "created_at": d["created_at"], "last_login": d.get("last_login", "")}
+        for u, d in IAM_USERS.items()
+    ]
+
+def iam_update_role(username: str, role: str) -> dict:
+    if username not in IAM_USERS:
+        return {"ok": False, "error": "User not found"}
+    if role not in IAM_ROLES:
+        return {"ok": False, "error": "Invalid role"}
+    IAM_USERS[username]["role"] = role
+    return {"ok": True, "username": username, "role": role}
+
+def iam_toggle_mfa(username: str) -> dict:
+    if username not in IAM_USERS:
+        return {"ok": False, "error": "User not found"}
+    IAM_USERS[username]["mfa_enabled"] = not IAM_USERS[username]["mfa_enabled"]
+    if IAM_USERS[username]["mfa_enabled"]:
+        import secrets
+        IAM_USERS[username]["mfa_secret"] = secrets.token_hex(16)
+    return {"ok": True, "mfa_enabled": IAM_USERS[username]["mfa_enabled"]}
+
 
 def dpi_inspect(src_ip: str, payload: bytes) -> list:
     if not payload:
@@ -2253,8 +2899,8 @@ def analyze_packet(pkt):
                 if ABUSEIPDB_API_KEY and src_ip not in _ABUSEIPDB_CACHE:
                     threading.Thread(target=_fetch_abuseipdb, args=(src_ip,), daemon=True).start()
 
-        # Fetch intel for any new external IP
-        if not is_private(src_ip) and src_ip not in STATE.ip_intel:
+        # Fetch geo for ANY new external IP (not just blocked)
+        if not is_private(src_ip) and src_ip not in _geo_city_cache:
             threading.Thread(target=_fetch_city_async, args=(src_ip,), daemon=True).start()
 
         # Update risk score
@@ -2266,12 +2912,11 @@ def analyze_packet(pkt):
             STATE.packets_allowed += 1
             STATE.active_conns[src_ip].add(dst_port)
 
-        # Get geo info for packet entry
+        # Get geo info for packet entry (with guaranteed coords via fallback)
         geo = _geo_city_cache.get(src_ip, {})
         country_code = geo.get("country") or get_country(src_ip) or ""
         city = geo.get("city", "")
-        lat  = geo.get("latitude")
-        lon  = geo.get("longitude")
+        lat, lon = _get_ip_coords(src_ip, country_code)
         location = f"{city}, {GEO_COUNTRY_NAMES.get(country_code, country_code)}" if city else GEO_COUNTRY_NAMES.get(country_code, country_code)
 
         STATE.recent_packets.appendleft({
@@ -2337,6 +2982,19 @@ def snapshot_traffic():
 
 CLIENTS: set = set()
 
+def _build_top_ip_entry(ip: str, hits: int) -> dict:
+    """Build a top_ips entry with guaranteed lat/lon coordinates."""
+    geo = _geo_city_cache.get(ip, {})
+    country = geo.get("country") or get_country(ip) or ""
+    lat, lon = _get_ip_coords(ip, country)
+    return {
+        "ip": ip, "hits": hits,
+        "country": country,
+        "lat": lat, "lon": lon,
+        "city": geo.get("city", ""),
+        "org": geo.get("org", ""),
+    }
+
 def build_state_message() -> dict:
     with STATE.lock:
         conns_count = sum(len(v) for v in STATE.active_conns.values())
@@ -2370,16 +3028,20 @@ def build_state_message() -> dict:
             "record_active":      STATE.record_active,
             "record_file":        STATE.record_file_path,
             "record_packets":     len(STATE.record_packets),
-            "top_ips":            [{"ip": ip, "hits": h} for ip, h in top_ips],
+            "top_ips":            [_build_top_ip_entry(ip, h) for ip, h in top_ips],
             "dpi_alerts":         list(STATE.dpi_alerts)[:20],
             "suricata_enabled":   SURICATA_ENABLED,
             "suricata_rules":     SURICATA_LOADED,
             "suricata_alerts":    list(STATE.suricata_alerts)[:20],
+            "suricata_disabled":  len(SURICATA_DISABLED_SIDS),
+            "suricata_top_hits":  sorted(SURICATA_RULE_HITS.items(), key=lambda x: -x[1])[:10],
             "geo_blocked_countries": list(GEO_BLOCKED_COUNTRIES),
             "geo_country_names":  GEO_COUNTRY_NAMES,
             "geo_hits": [
-                {"country": k, "name": GEO_COUNTRY_NAMES.get(k, k), "hits": v}
+                {"country": k, "name": GEO_COUNTRY_NAMES.get(k, k), "hits": v,
+                 "lat": _COUNTRY_COORDS.get(k, (0,0))[1], "lon": _COUNTRY_COORDS.get(k, (0,0))[0]}
                 for k, v in sorted(STATE.geo_hits.items(), key=lambda x: -x[1])
+                if k in _COUNTRY_COORDS
             ],
             # v1.9.0
             "ip_risk_scores": dict(list(sorted(STATE.ip_risk_scores.items(), key=lambda x: -x[1]))[:20]),
@@ -2543,10 +3205,18 @@ def scan_lan() -> list:
             def ping_host(i):
                 ip = f"{base}.{i}"
                 try:
+                    _psi = None
+                    _pcf = 0
+                    if os.name == 'nt':
+                        _psi = subprocess.STARTUPINFO()
+                        _psi.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                        _psi.wShowWindow = 0
+                        _pcf = subprocess.CREATE_NO_WINDOW
                     result = subprocess.run(
                         ["ping", "-n", "1", "-w", "200", ip] if os.name == "nt"
                         else ["ping", "-c", "1", "-W", "1", ip],
-                        capture_output=True, timeout=2
+                        capture_output=True, timeout=2,
+                        startupinfo=_psi, creationflags=_pcf
                     )
                     if result.returncode == 0:
                         hostname = ""
@@ -2750,11 +3420,56 @@ async def handle_ws_command(ws, msg: dict):
             "enabled": SURICATA_ENABLED,
             "rules":   SURICATA_LOADED,
             "alerts":  list(STATE.suricata_alerts)[:50],
+            "disabled_count": len(SURICATA_DISABLED_SIDS),
         }))
+
+    elif cmd == "suricata_get_rules":
+        rules = suricata_get_rules_list()
+        search = msg.get("search", "").lower()
+        sev_filter = msg.get("severity", "")
+        if search:
+            rules = [r for r in rules if search in r["msg"].lower() or search in str(r["sid"])]
+        if sev_filter:
+            rules = [r for r in rules if r["severity"] == sev_filter]
+        await ws.send(json.dumps({"type": "suricata_rules_list", "rules": rules, "total": SURICATA_LOADED}))
+
+    elif cmd == "suricata_toggle_rule":
+        sid = msg.get("sid", 0)
+        if sid in SURICATA_DISABLED_SIDS:
+            SURICATA_DISABLED_SIDS.discard(sid)
+            enabled = True
+        else:
+            SURICATA_DISABLED_SIDS.add(sid)
+            enabled = False
+        save_settings()
+        await ws.send(json.dumps({"type": "suricata_rule_toggled", "sid": sid, "enabled": enabled}))
+
+    elif cmd == "suricata_add_custom":
+        result = suricata_add_custom_rule(
+            msg.get("msg", "Custom Rule"),
+            msg.get("pattern", ""),
+            msg.get("proto", "TCP"),
+            msg.get("severity", "high"),
+            msg.get("action", "alert"),
+        )
+        save_settings()
+        await ws.send(json.dumps({"type": "suricata_custom_added", **result}))
+
+    elif cmd == "suricata_delete_rule":
+        result = suricata_delete_rule(msg.get("sid", 0))
+        save_settings()
+        await ws.send(json.dumps({"type": "suricata_rule_deleted", **result}))
+
+    elif cmd == "suricata_export_alerts":
+        alerts = list(STATE.suricata_alerts)
+        await ws.send(json.dumps({"type": "suricata_alerts_export", "alerts": alerts, "count": len(alerts)}))
+
+    elif cmd == "suricata_clear_alerts":
+        STATE.suricata_alerts.clear()
+        await ws.send(json.dumps({"type": "suricata_alerts_cleared"}))
 
     elif cmd == "load_et_rules":
         ruleset = msg.get("ruleset", "et_scan")
-        # Lancer en thread pour ne pas bloquer le WS
         def _load():
             result = load_et_rules_online(ruleset)
             asyncio.run_coroutine_threadsafe(
@@ -2979,6 +3694,279 @@ async def handle_ws_command(ws, msg: dict):
         save_settings()
         await ws.send(json.dumps({"type": "wg_config_saved"}))
 
+    # ══════════════════════════════════════════════════════════════════════
+    # v4.0 — New Modules: Vulnerability / Backup / Incidents / Training / NAC / IAM
+    # ══════════════════════════════════════════════════════════════════════
+
+    # ── Vulnerability Scanner ──────────────────────────────────────────
+    elif cmd == "vuln_port_scan":
+        target = msg.get("target", "127.0.0.1")
+        port_range = msg.get("ports", "1-1024")
+        def _scan():
+            results = vuln_scan_ports(target, port_range)
+            asyncio.run_coroutine_threadsafe(
+                ws.send(json.dumps({"type": "vuln_scan_result", "target": target, **results})),
+                asyncio.get_event_loop()
+            )
+        threading.Thread(target=_scan, daemon=True).start()
+        await ws.send(json.dumps({"type": "vuln_scan_started", "target": target}))
+
+    elif cmd == "vuln_cve_lookup":
+        cve_id = msg.get("cve", "")
+        def _lookup():
+            result = vuln_cve_lookup(cve_id)
+            asyncio.run_coroutine_threadsafe(
+                ws.send(json.dumps({"type": "vuln_cve_result", "cve": cve_id, **result})),
+                asyncio.get_event_loop()
+            )
+        threading.Thread(target=_lookup, daemon=True).start()
+
+    elif cmd == "vuln_system_check":
+        def _check():
+            result = vuln_system_check()
+            asyncio.run_coroutine_threadsafe(
+                ws.send(json.dumps({"type": "vuln_system_result", **result})),
+                asyncio.get_event_loop()
+            )
+        threading.Thread(target=_check, daemon=True).start()
+        await ws.send(json.dumps({"type": "vuln_system_checking"}))
+
+    elif cmd == "vuln_get_history":
+        await ws.send(json.dumps({"type": "vuln_history", "scans": list(VULN_SCAN_HISTORY)}))
+
+    # ── Backup & Recovery ──────────────────────────────────────────────
+    elif cmd == "backup_create":
+        name = msg.get("name", "")
+        include = msg.get("include", ["settings", "rules", "blocked"])
+        def _backup():
+            result = backup_create(name, include)
+            asyncio.run_coroutine_threadsafe(
+                ws.send(json.dumps({"type": "backup_created", **result})),
+                asyncio.get_event_loop()
+            )
+        threading.Thread(target=_backup, daemon=True).start()
+        await ws.send(json.dumps({"type": "backup_creating"}))
+
+    elif cmd == "backup_restore":
+        filename = msg.get("filename", "")
+        def _restore():
+            result = backup_restore(filename)
+            asyncio.run_coroutine_threadsafe(
+                ws.send(json.dumps({"type": "backup_restored", **result})),
+                asyncio.get_event_loop()
+            )
+        threading.Thread(target=_restore, daemon=True).start()
+        await ws.send(json.dumps({"type": "backup_restoring"}))
+
+    elif cmd == "backup_list":
+        backups = backup_list()
+        await ws.send(json.dumps({"type": "backup_list", "backups": backups}))
+
+    elif cmd == "backup_delete":
+        result = backup_delete(msg.get("filename", ""))
+        await ws.send(json.dumps({"type": "backup_deleted", **result}))
+
+    elif cmd == "backup_schedule":
+        BACKUP_SCHEDULE["enabled"] = msg.get("enabled", False)
+        BACKUP_SCHEDULE["interval_hours"] = msg.get("interval", 24)
+        save_settings()
+        await ws.send(json.dumps({"type": "backup_schedule_set", **BACKUP_SCHEDULE}))
+
+    # ── Incident Response / Ticketing ──────────────────────────────────
+    elif cmd == "incident_create":
+        ticket = incident_create(
+            msg.get("title", ""),
+            msg.get("description", ""),
+            msg.get("severity", "medium"),
+            msg.get("assigned_to", ""),
+            msg.get("related_ip", ""),
+        )
+        await ws.send(json.dumps({"type": "incident_created", "ticket": ticket}))
+
+    elif cmd == "incident_update":
+        ticket_id = msg.get("id", "")
+        updates = {k: v for k, v in msg.items() if k in ("status", "notes", "assigned_to", "severity")}
+        result = incident_update(ticket_id, updates)
+        await ws.send(json.dumps({"type": "incident_updated", **result}))
+
+    elif cmd == "incident_list":
+        status_filter = msg.get("status", "")
+        tickets = incident_list(status_filter)
+        await ws.send(json.dumps({"type": "incident_list", "tickets": tickets}))
+
+    elif cmd == "incident_get":
+        ticket = incident_get(msg.get("id", ""))
+        await ws.send(json.dumps({"type": "incident_detail", "ticket": ticket}))
+
+    elif cmd == "incident_delete":
+        result = incident_delete(msg.get("id", ""))
+        await ws.send(json.dumps({"type": "incident_deleted", **result}))
+
+    # ── Training & Awareness ──────────────────────────────────────────
+    elif cmd == "training_get_modules":
+        await ws.send(json.dumps({"type": "training_modules", "modules": TRAINING_MODULES}))
+
+    elif cmd == "training_submit_quiz":
+        module_id = msg.get("module_id", "")
+        answers = msg.get("answers", {})
+        result = training_submit_quiz(module_id, answers)
+        await ws.send(json.dumps({"type": "training_quiz_result", **result}))
+
+    elif cmd == "training_get_scores":
+        await ws.send(json.dumps({"type": "training_scores", "scores": TRAINING_SCORES}))
+
+    elif cmd == "training_phishing_sim":
+        result = training_phishing_sim(msg.get("target_email", ""))
+        await ws.send(json.dumps({"type": "training_phishing_started", **result}))
+
+    # ── NAC Enhanced ──────────────────────────────────────────────────
+    elif cmd == "nac_approve_device":
+        ip = msg.get("ip", "")
+        mac = msg.get("mac", "")
+        name = msg.get("name", "")
+        nac_approve_device(ip, mac, name)
+        await ws.send(json.dumps({"type": "nac_device_approved", "ip": ip, "mac": mac}))
+
+    elif cmd == "nac_deny_device":
+        ip = msg.get("ip", "")
+        mac = msg.get("mac", "")
+        nac_deny_device(ip, mac)
+        await ws.send(json.dumps({"type": "nac_device_denied", "ip": ip, "mac": mac}))
+
+    elif cmd == "nac_get_devices":
+        await ws.send(json.dumps({"type": "nac_devices", "approved": NAC_APPROVED, "denied": NAC_DENIED, "pending": NAC_PENDING}))
+
+    elif cmd == "nac_set_policy":
+        NAC_POLICY.update({k: v for k, v in msg.items() if k in ("default_action", "require_approval", "mac_filter")})
+        save_settings()
+        await ws.send(json.dumps({"type": "nac_policy_set", "policy": NAC_POLICY}))
+
+    # ── IAM Enhanced ──────────────────────────────────────────────────
+    elif cmd == "iam_create_user":
+        result = iam_create_user(
+            msg.get("username", ""),
+            msg.get("password", ""),
+            msg.get("role", "viewer"),
+            msg.get("email", ""),
+        )
+        await ws.send(json.dumps({"type": "iam_user_created", **result}))
+
+    elif cmd == "iam_delete_user":
+        result = iam_delete_user(msg.get("username", ""))
+        await ws.send(json.dumps({"type": "iam_user_deleted", **result}))
+
+    elif cmd == "iam_list_users":
+        users = iam_list_users()
+        await ws.send(json.dumps({"type": "iam_users", "users": users}))
+
+    elif cmd == "iam_update_role":
+        result = iam_update_role(msg.get("username", ""), msg.get("role", "viewer"))
+        await ws.send(json.dumps({"type": "iam_role_updated", **result}))
+
+    elif cmd == "iam_toggle_mfa":
+        result = iam_toggle_mfa(msg.get("username", ""))
+        await ws.send(json.dumps({"type": "iam_mfa_toggled", **result}))
+
+    elif cmd == "iam_get_sessions":
+        await ws.send(json.dumps({"type": "iam_sessions", "sessions": list(IAM_SESSIONS.values())}))
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# PYWEBVIEW API — Native window mode (direct JS bridge, no WebSocket)
+# ═══════════════════════════════════════════════════════════════════════════
+
+class _FakeWS:
+    """Fake WebSocket that captures responses for pywebview API"""
+    def __init__(self):
+        self.responses = []
+    async def send(self, data):
+        self.responses.append(json.loads(data))
+
+class NetGuardAPI:
+    """API exposed to JavaScript via pywebview.api — instant calls, no WebSocket"""
+
+    def __init__(self):
+        self._window = None
+        self._stop_broadcast = False
+        self._loop = None
+
+    def set_window(self, window):
+        self._window = window
+
+    def get_state(self):
+        return json.loads(json.dumps(build_state_message(), default=str))
+
+    def send_command(self, cmd, params=None):
+        """Generic command handler — routes any command through the existing handler"""
+        if params is None:
+            params = {}
+        msg = {"cmd": cmd, **params}
+
+        fake_ws = _FakeWS()
+        loop = self._loop
+        if loop and loop.is_running():
+            future = asyncio.run_coroutine_threadsafe(handle_ws_command(fake_ws, msg), loop)
+            try:
+                future.result(timeout=30)
+            except Exception as e:
+                return {"type": "error", "message": str(e)}
+        else:
+            try:
+                asyncio.run(handle_ws_command(fake_ws, msg))
+            except Exception as e:
+                return {"type": "error", "message": str(e)}
+
+        if fake_ws.responses:
+            return fake_ws.responses[-1]
+        return {"type": "ack", "cmd": cmd}
+
+    # ── Startup & Tray ────────────────────────────────────────────────
+    def get_startup_state(self):
+        if not HAS_STARTUP_UTILS:
+            return {"enabled": False, "available": False}
+        return {"enabled": is_startup_enabled("NetGuard Pro"), "available": True}
+
+    def toggle_startup_boot(self):
+        if not HAS_STARTUP_UTILS:
+            return {"enabled": False, "available": False}
+        bat_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "LANCER_NETGUARD.bat")
+        new_state = toggle_startup_reg("NetGuard Pro", bat_path)
+        return {"enabled": new_state, "available": True}
+
+    def minimize_to_tray(self):
+        if not HAS_STARTUP_UTILS or not self._window:
+            return {"success": False}
+        def _on_quit():
+            if self._window:
+                self._window.destroy()
+        minimize_to_tray(self._window, "NetGuard Pro", on_quit=_on_quit)
+        return {"success": True}
+
+    def get_all_startup_states(self):
+        if not HAS_STARTUP_UTILS:
+            return {}
+        return get_all_startup_states()
+
+
+def _pywebview_state_broadcast(api):
+    """Background thread: push state to pywebview window periodically"""
+    save_counter = 0
+    while not api._stop_broadcast:
+        try:
+            snapshot_traffic()
+            save_counter += 1
+            if save_counter >= 30:
+                save_settings()
+                save_counter = 0
+            if api._window:
+                state = build_state_message()
+                js_data = json.dumps(state, default=str)
+                api._window.evaluate_js(f"if(typeof handleMsg==='function')handleMsg({js_data})")
+        except Exception:
+            pass
+        time.sleep(1)
+
+
 async def broadcast_state():
     global CLIENTS
     save_counter = 0
@@ -3132,6 +4120,9 @@ def save_settings():
             "dpi_enabled": CFG.dpi_enabled,
             "dpi_mask_sensitive": CFG.dpi_mask_sensitive,
             "suricata_enabled": SURICATA_ENABLED,
+            "suricata_disabled_sids": list(SURICATA_DISABLED_SIDS),
+            "suricata_custom_rules": SURICATA_CUSTOM_RULES,
+            "suricata_rule_hits": dict(SURICATA_RULE_HITS),
             # v3.0
             "anomaly_enabled": CFG.anomaly_enabled,
             "anomaly_zscore": CFG.anomaly_zscore,
@@ -3165,6 +4156,15 @@ def save_settings():
             "wg_dns": CFG.wg_dns,
             "wg_endpoint": CFG.wg_endpoint,
             "wg_interface": CFG.wg_interface,
+            # v4.0 — New Modules
+            "nac_approved": NAC_APPROVED,
+            "nac_denied": NAC_DENIED,
+            "nac_policy": NAC_POLICY,
+            "backup_schedule": BACKUP_SCHEDULE,
+            "iam_users": {u: {k: v for k, v in d.items() if k != "password_hash"}
+                         for u, d in IAM_USERS.items()},
+            "incidents": INCIDENTS[:50],
+            "training_scores": TRAINING_SCORES,
             "detection_params": {
                 k: DETECTION_PARAMS[k]["value"]
                 for k in DETECTION_PARAMS
@@ -3178,7 +4178,7 @@ def save_settings():
 
 def load_settings():
     """Charge les settings depuis le fichier JSON"""
-    global GEO_BLOCKED_COUNTRIES, SURICATA_ENABLED
+    global GEO_BLOCKED_COUNTRIES, SURICATA_ENABLED, SURICATA_DISABLED_SIDS, SURICATA_CUSTOM_RULES, SURICATA_LOADED
     if not os.path.exists(SETTINGS_FILE):
         log.info("[SETTINGS] Aucun fichier de settings trouvé — paramètres par défaut")
         return
@@ -3204,6 +4204,25 @@ def load_settings():
         CFG.dpi_enabled         = s.get("dpi_enabled", True)
         CFG.dpi_mask_sensitive  = s.get("dpi_mask_sensitive", True)
         SURICATA_ENABLED        = s.get("suricata_enabled", True)
+        SURICATA_DISABLED_SIDS  = set(s.get("suricata_disabled_sids", []))
+        SURICATA_RULE_HITS.update(s.get("suricata_rule_hits", {}))
+        # Recharger les règles custom
+        for cr in s.get("suricata_custom_rules", []):
+            try:
+                pattern = re.compile(cr["pattern_str"].encode() if isinstance(cr["pattern_str"], str) else cr["pattern_str"],
+                                    re.DOTALL | re.IGNORECASE)
+                existing_sids = {r["sid"] for r in SURICATA_RULES}
+                if cr["sid"] not in existing_sids:
+                    SURICATA_RULES.append({
+                        "sid": cr["sid"], "msg": cr["msg"], "pattern": pattern,
+                        "proto": cr.get("proto", "TCP"), "action": cr.get("action", "alert"),
+                        "severity": cr.get("severity", "high"), "custom": True,
+                        "pattern_str": cr["pattern_str"],
+                    })
+                    SURICATA_CUSTOM_RULES.append(cr)
+            except Exception:
+                pass
+        SURICATA_LOADED = len(SURICATA_RULES)
 
         # v3.0
         CFG.anomaly_enabled       = s.get("anomaly_enabled", True)
@@ -3239,11 +4258,22 @@ def load_settings():
         CFG.wg_endpoint     = s.get("wg_endpoint", "")
         CFG.wg_interface    = s.get("wg_interface", "wg0")
 
+        # v4.0 — New Modules
+        global NAC_APPROVED, NAC_DENIED, NAC_POLICY, BACKUP_SCHEDULE, INCIDENTS, INCIDENT_COUNTER, TRAINING_SCORES
+        NAC_APPROVED = s.get("nac_approved", [])
+        NAC_DENIED = s.get("nac_denied", [])
+        NAC_POLICY.update(s.get("nac_policy", {}))
+        BACKUP_SCHEDULE.update(s.get("backup_schedule", {}))
+        INCIDENTS = s.get("incidents", [])
+        INCIDENT_COUNTER = len(INCIDENTS)
+        TRAINING_SCORES = s.get("training_scores", {})
+
         log.info(f"[SETTINGS] Chargé — {len(BLOCKED_IPS)} IPs bloquées, {len(GEO_BLOCKED_COUNTRIES)} pays géobloqués")
     except Exception as e:
         log.error(f"[SETTINGS] Erreur chargement: {e}")
 
-def main():
+def _common_init():
+    """Common setup for both pywebview and WebSocket modes"""
     parser = argparse.ArgumentParser(description="NetGuard Pro — Surveillance réseau")
     parser.add_argument("--interface", default="auto")
     parser.add_argument("--port",      type=int, default=8765)
@@ -3258,17 +4288,21 @@ def main():
         interface = auto_select_interface()
         log.info(f"[AUTO] Interface sélectionnée: {interface}")
 
-    # Créer les dossiers nécessaires
     os.makedirs(CFG.record_dir, exist_ok=True)
     os.makedirs("reports", exist_ok=True)
-
-    # Charger les settings sauvegardés
     load_settings()
+
+    return interface, args
+
+
+def main_webview():
+    """Launch with pywebview — native window, direct API calls"""
+    interface, args = _common_init()
 
     try:
         print("""
 +--------------------------------------------------------------+
-|           NetGuard Pro v3.0.0 -- Demarrage                   |
+|       NetGuard Pro v4.0.0 -- Fenetre native (pywebview)      |
 +--------------------------------------------------------------+
 |  IDS - DPI - Honeypot - DNS BH - Scan LAN - GeoBlock        |
 |  Anomaly Detection - JA3 - Entropy - Attack Correlation      |
@@ -3277,7 +4311,111 @@ def main():
 +--------------------------------------------------------------+
 """)
     except UnicodeEncodeError:
-        print("[NetGuard Pro v3.0.0] Demarrage...")
+        print("[NetGuard Pro v4.0.0] Demarrage (pywebview)...")
+
+    log.info("[MODE] Protection active" if CFG.can_block else "[MODE] Surveillance uniquement")
+
+    # Start packet capture in background
+    threading.Thread(target=start_capture, args=(interface,), daemon=True).start()
+
+    # Start threat feeds
+    if CFG.threat_feeds_enabled:
+        _schedule_feed_refresh()
+    if CFG.otx_enabled:
+        threading.Thread(target=_otx_fetch_pulses, daemon=True).start()
+    if CFG.wg_enabled:
+        _wg_init_server()
+        _wg_load_peers()
+
+    # Start async event loop in background thread for async command handling + WS server
+    loop = asyncio.new_event_loop()
+    def _run_loop():
+        asyncio.set_event_loop(loop)
+        # Also start WebSocket server so map.html and other pages can connect
+        async def _start_ws_and_run():
+            if HAS_WS:
+                try:
+                    ver = tuple(int(x) for x in websockets.__version__.split(".")[:2])
+                except Exception:
+                    ver = (0, 0)
+                try:
+                    if ver >= (14, 0):
+                        async with websockets.serve(ws_handler, "localhost", CFG.ws_port):
+                            log.info(f"[WS] Serveur WebSocket demarre sur ws://localhost:{CFG.ws_port} (pywebview+WS)")
+                            await broadcast_state()
+                    else:
+                        server = await websockets.serve(ws_handler, "localhost", CFG.ws_port)
+                        log.info(f"[WS] Serveur WebSocket demarre sur ws://localhost:{CFG.ws_port} (pywebview+WS)")
+                        await broadcast_state()
+                except OSError as e:
+                    log.warning(f"[WS] Port {CFG.ws_port} deja utilise, mode pywebview-only: {e}")
+                    while True:
+                        await asyncio.sleep(1)
+            else:
+                while True:
+                    await asyncio.sleep(1)
+        loop.run_until_complete(_start_ws_and_run())
+    threading.Thread(target=_run_loop, daemon=True).start()
+
+    api = NetGuardAPI()
+    api._loop = loop
+
+    dashboard_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "netguard_dashboard.html")
+
+    window = webview.create_window(
+        "NetGuard Pro v4.0.0",
+        dashboard_path,
+        js_api=api,
+        width=1360,
+        height=860,
+        min_size=(1000, 650),
+        background_color="#0f0f13",
+        maximized=True,
+    )
+    api.set_window(window)
+
+    def on_loaded():
+        print("[+] Dashboard charge dans la fenetre native")
+        threading.Thread(target=_pywebview_state_broadcast, args=(api,), daemon=True).start()
+
+    window.events.loaded += on_loaded
+
+    try:
+        webview.start(debug=False)
+    finally:
+        api._stop_broadcast = True
+        loop.call_soon_threadsafe(loop.stop)
+        save_settings()
+        print("[*] NetGuard Pro ferme.")
+
+
+def main():
+    # --headless flag: run in WebSocket-only mode (no window), used by Cortex
+    headless = "--headless" in sys.argv
+    if headless:
+        sys.argv.remove("--headless")
+
+    if not headless and HAS_WEBVIEW:
+        print("[*] pywebview detecte -- lancement en mode fenetre native")
+        main_webview()
+        return
+
+    # WebSocket-only mode (headless or no pywebview)
+    interface, args = _common_init()
+    mode_label = "headless (Cortex)" if headless else "WebSocket"
+    try:
+        print(f"""
++--------------------------------------------------------------+
+|       NetGuard Pro v4.0.0 -- Mode {mode_label:<24}|
++--------------------------------------------------------------+
+|  IDS - DPI - Honeypot - DNS BH - Scan LAN - GeoBlock        |
+|  Anomaly Detection - JA3 - Entropy - Attack Correlation      |
+|  Threat Intel (VT/OTX/Feeds) - Discord/Telegram Alerts       |
+|  Device Isolation - Quarantine - Forensic - WireGuard VPN    |
++--------------------------------------------------------------+
+""")
+    except UnicodeEncodeError:
+        print("[NetGuard Pro v4.0.0] Demarrage...")
     log.info("[MODE] Protection active" if CFG.can_block else "[MODE] Surveillance uniquement")
     try:
         asyncio.run(main_async(interface))

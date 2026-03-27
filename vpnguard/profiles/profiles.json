@@ -1,0 +1,26 @@
+{
+  "default": {
+    "name": "Maison",
+    "type": "server",
+    "wg_address": "10.66.66.1/24",
+    "wg_dns": "1.1.1.1, 9.9.9.9",
+    "wg_endpoint": "",
+    "wg_listen_port": 51820
+  },
+  "bureau": {
+    "name": "Bureau",
+    "type": "server",
+    "wg_address": "10.66.66.1/24",
+    "wg_dns": "1.1.1.1, 9.9.9.9",
+    "wg_endpoint": "",
+    "wg_listen_port": 51820
+  },
+  "public": {
+    "name": "Wi-Fi Public",
+    "type": "server",
+    "wg_address": "10.66.66.1/24",
+    "wg_dns": "1.1.1.1, 9.9.9.9",
+    "wg_endpoint": "",
+    "wg_listen_port": 51820
+  }
+}

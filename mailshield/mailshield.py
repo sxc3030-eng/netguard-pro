@@ -13,6 +13,18 @@ import json
 import sqlite3
 import os
 import sys
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
+# Fix pythonw (no console) — redirect None stdout/stderr to devnull
+if sys.stdout is None:
+    sys.stdout = open(os.devnull, 'w')
+if sys.stderr is None:
+    sys.stderr = open(os.devnull, 'w')
+
 import re
 import hashlib
 import threading
@@ -36,6 +48,19 @@ from pathlib import Path
 import webbrowser
 import msal
 
+try:
+    import webview
+    HAS_WEBVIEW = True
+except ImportError:
+    HAS_WEBVIEW = False
+
+try:
+    sys.path.insert(0, str(Path(__file__).parent.parent))
+    from startup_utils import is_startup_enabled, toggle_startup as toggle_startup_reg, minimize_to_tray
+    HAS_STARTUP_UTILS = True
+except ImportError:
+    HAS_STARTUP_UTILS = False
+
 VERSION = "2.0.0"
 SCRIPT_DIR = Path(__file__).parent
 DB_PATH = SCRIPT_DIR / "mailshield.db"
@@ -43,7 +68,7 @@ SETTINGS_PATH = SCRIPT_DIR / "mailshield_settings.json"
 QUARANTINE_DIR = SCRIPT_DIR / "mailshield_quarantine"
 LOG_PATH = SCRIPT_DIR / "mailshield.log"
 
-# ─── Logging Setup ────────────────────────────────────────────────────────────
+# --- Logging Setup ------------------------------------------------------------
 
 logging.basicConfig(
     level=logging.INFO,
@@ -55,7 +80,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("MailShield")
 
-# ─── Password Encryption ──────────────────────────────────────────────────────
+# --- Password Encryption ------------------------------------------------------
 
 class PasswordVault:
     """Encrypts/decrypts passwords using a machine-unique key + AES-like XOR cipher."""
@@ -93,7 +118,7 @@ class PasswordVault:
 
 password_vault = PasswordVault()
 
-# ─── API Security ─────────────────────────────────────────────────────────────
+# --- API Security -------------------------------------------------------------
 
 API_TOKEN_PATH = SCRIPT_DIR / ".api_token"
 
@@ -109,7 +134,7 @@ def get_or_create_api_token():
 
 API_TOKEN = get_or_create_api_token()
 
-# ─── Settings ──────────────────────────────────────────────────────────────────
+# --- Settings ------------------------------------------------------------------
 
 def load_settings():
     try:
@@ -145,7 +170,7 @@ def get_decrypted_password(account):
     """Get the decrypted password for an account."""
     return password_vault.decrypt(account.get("password", ""))
 
-# ─── Database ──────────────────────────────────────────────────────────────────
+# --- Database ------------------------------------------------------------------
 
 def init_database():
     conn = sqlite3.connect(str(DB_PATH))
@@ -272,7 +297,7 @@ def init_database():
     conn.commit()
     conn.close()
 
-# ─── Email Header Decoder ─────────────────────────────────────────────────────
+# --- Email Header Decoder -----------------------------------------------------
 
 def decode_header_value(value):
     if not value:
@@ -293,7 +318,7 @@ def parse_email_address(addr_str):
     name, address = email.utils.parseaddr(decoded)
     return name, address
 
-# ─── Filter Engine ─────────────────────────────────────────────────────────────
+# --- Filter Engine -------------------------------------------------------------
 
 class FilterEngine:
     def __init__(self, settings):
@@ -364,7 +389,7 @@ class FilterEngine:
         text_pool = f"{from_name} {from_email} {subject} {body} {' '.join(attachment_names)}".lower()
         return sum(1 for kw in keywords if kw.lower() in text_pool)
 
-# ─── Attachment Scanner ────────────────────────────────────────────────────────
+# --- Attachment Scanner --------------------------------------------------------
 
 class AttachmentScanner:
     def __init__(self, settings):
@@ -419,7 +444,7 @@ class AttachmentScanner:
         result = "; ".join(reasons) if reasons else "clean"
         return max(0, score), False, is_quarantined, result
 
-# ─── Contact Book ──────────────────────────────────────────────────────────────
+# --- Contact Book --------------------------------------------------------------
 
 class ContactBook:
     def __init__(self):
@@ -522,7 +547,7 @@ class ContactBook:
             conn.commit()
         conn.close()
 
-# ─── Provider Detector ─────────────────────────────────────────────────────────
+# --- Provider Detector ---------------------------------------------------------
 
 # Thunderbird public client ID - widely used by open-source email clients
 MS_CLIENT_ID = "9e5f94bc-e8a4-4e73-b8be-63364c29d753"
@@ -658,7 +683,7 @@ class MicrosoftOAuth:
         auth_string = f"user={user}\x01auth=Bearer {access_token}\x01\x01"
         return auth_string
 
-# ─── Blacklist Manager ─────────────────────────────────────────────────────────
+# --- Blacklist Manager ---------------------------------------------------------
 
 class BlacklistManager:
     """Manages email/domain blacklist."""
@@ -727,7 +752,7 @@ class BlacklistManager:
         return "\n".join(lines)
 
 
-# ─── Threat Logger ─────────────────────────────────────────────────────────────
+# --- Threat Logger -------------------------------------------------------------
 
 class ThreatLogger:
     """Logs and tracks security threats."""
@@ -780,7 +805,7 @@ class ThreatLogger:
         conn.close()
 
 
-# ─── Phishing Detector ────────────────────────────────────────────────────────
+# --- Phishing Detector --------------------------------------------------------
 
 class PhishingDetector:
     """Advanced phishing and fraud detection."""
@@ -890,7 +915,7 @@ class PhishingDetector:
         }
 
 
-# ─── Internationalization ─────────────────────────────────────────────────────
+# --- Internationalization -----------------------------------------------------
 
 I18N = {
     "fr": {
@@ -1022,7 +1047,7 @@ I18N = {
 }
 
 
-# ─── Mail Engine ───────────────────────────────────────────────────────────────
+# --- Mail Engine ---------------------------------------------------------------
 
 class MailShieldEngine:
     def __init__(self):
@@ -1049,7 +1074,7 @@ class MailShieldEngine:
         self.attachment_scanner = AttachmentScanner(self.settings)
         self.provider_detector = ProviderDetector(self.settings)
 
-    # ── IMAP Connection ────────────────────────────────────────────────────
+    # -- IMAP Connection ----------------------------------------------------
 
     def connect_imap(self, account=None):
         acc = account or (self.settings.get("accounts", [{}])[0] if self.settings.get("accounts") else {})
@@ -1112,7 +1137,7 @@ class MailShieldEngine:
                 pass
             self.imap_conn = None
 
-    # ── Fetch Emails ───────────────────────────────────────────────────────
+    # -- Fetch Emails -------------------------------------------------------
 
     def fetch_emails(self, folder="INBOX", limit=50, since_days=30):
         if not self.imap_conn:
@@ -1325,7 +1350,7 @@ class MailShieldEngine:
             score -= 15
         return max(0, min(100, score))
 
-    # ── Send Email ─────────────────────────────────────────────────────────
+    # -- Send Email ---------------------------------------------------------
 
     def send_email(self, to, subject, body_html, cc="", bcc="", attachments=None, account=None):
         acc = account or (self.settings.get("accounts", [{}])[0] if self.settings.get("accounts") else {})
@@ -1392,7 +1417,7 @@ class MailShieldEngine:
         except Exception as e:
             return False, str(e)
 
-    # ── Database Queries ───────────────────────────────────────────────────
+    # -- Database Queries ---------------------------------------------------
 
     def get_emails(self, category=None, folder="INBOX", search=None, page=1, per_page=50):
         conn = sqlite3.connect(str(DB_PATH))
@@ -1513,7 +1538,7 @@ class MailShieldEngine:
             return {"filename": row[0], "content_type": row[1], "data": row[2]}
         return None
 
-# ─── HTTP Server ───────────────────────────────────────────────────────────────
+# --- HTTP Server ---------------------------------------------------------------
 
 engine = None
 
@@ -1580,7 +1605,7 @@ class MailShieldHTTPHandler(SimpleHTTPRequestHandler):
             safe = json.loads(json.dumps(engine.settings))
             for acc in safe.get("accounts", []):
                 if acc.get("password"):
-                    acc["password"] = "••••••••"  # Never expose passwords
+                    acc["password"] = "********"  # Never expose passwords
             self.json_response(safe)
         elif path == "/api/settings/filters":
             self.json_response(engine.settings.get("filter_keywords", {}))
@@ -1669,6 +1694,11 @@ class MailShieldHTTPHandler(SimpleHTTPRequestHandler):
             self.send_header("Content-Disposition", 'attachment; filename="mailshield_blacklist.txt"')
             self.end_headers()
             self.wfile.write(data.encode("utf-8"))
+        elif path == "/api/startup/state":
+            if HAS_STARTUP_UTILS:
+                self.json_response({"enabled": is_startup_enabled("MailShield Pro"), "available": True})
+            else:
+                self.json_response({"enabled": False, "available": False})
         else:
             self.send_error(404)
       except Exception as e:
@@ -2066,6 +2096,13 @@ A : {orig['to_email']}<br>
             conn.commit()
             conn.close()
             self.json_response({"success": True})
+        elif path == "/api/startup/toggle":
+            if HAS_STARTUP_UTILS:
+                bat_path = str(SCRIPT_DIR.parent / "LANCER_MAILSHIELD.bat")
+                new_state = toggle_startup_reg("MailShield Pro", bat_path)
+                self.json_response({"enabled": new_state, "available": True})
+            else:
+                self.json_response({"enabled": False, "available": False})
         else:
             self.send_error(404)
       except Exception as e:
@@ -2122,7 +2159,7 @@ A : {orig['to_email']}<br>
         self.send_header("Access-Control-Allow-Headers", "Content-Type, X-API-Token")
         self.end_headers()
 
-# ─── WebSocket Server ──────────────────────────────────────────────────────────
+# --- WebSocket Server ----------------------------------------------------------
 
 async def ws_handler(websocket):
     engine.ws_clients.add(websocket)
@@ -2165,7 +2202,7 @@ async def broadcast(data):
         msg = json.dumps(data, ensure_ascii=False, default=str)
         await asyncio.gather(*(c.send(msg) for c in engine.ws_clients), return_exceptions=True)
 
-# ─── Auto Sync Thread ─────────────────────────────────────────────────────────
+# --- Auto Sync Thread ---------------------------------------------------------
 
 def auto_sync_loop():
     while engine.running:
@@ -2183,9 +2220,10 @@ def auto_sync_loop():
             except:
                 pass
 
-# ─── Main ──────────────────────────────────────────────────────────────────────
+# --- Main ----------------------------------------------------------------------
 
-def main():
+def _common_init():
+    """Common initialization for both pywebview and browser modes"""
     global engine
     engine = MailShieldEngine()
 
@@ -2194,26 +2232,10 @@ def main():
     http_port = settings.get("server", {}).get("http_port", 8800)
     ws_port = settings.get("server", {}).get("ws_port", 8801)
 
-    print("""
-    ==========================================================
-    |           MailShield Pro v2.0.0                         |
-    |           Client Email Securise                         |
-    |           Filtrage Intelligent + Protection Avancee     |
-    ==========================================================
-    """)
-    print(f"  [*] Dashboard : http://{host}:{http_port}")
-    print(f"  [*] WebSocket : ws://{host}:{ws_port}")
-    print(f"  [*] Base de donnees : {DB_PATH}")
-    print(f"  [*] Quarantaine : {QUARANTINE_DIR}")
-    print(f"  [*] Log : {LOG_PATH}")
-    print(f"  [*] Securite : Passwords chiffres, CORS restreint, API token actif")
-    print()
-
     engine.running = True
 
     # Start auto-sync thread
-    sync_thread = threading.Thread(target=auto_sync_loop, daemon=True)
-    sync_thread.start()
+    threading.Thread(target=auto_sync_loop, daemon=True).start()
 
     # Start WebSocket server (with port fallback)
     actual_ws_port = ws_port
@@ -2223,7 +2245,6 @@ def main():
             async with websockets.serve(ws_handler, host, port):
                 await asyncio.Future()
         except OSError:
-            # Port busy, try next
             raise
 
     def try_ws():
@@ -2239,23 +2260,90 @@ def main():
 
     ws_thread = threading.Thread(target=try_ws, daemon=True)
     ws_thread.start()
-    time.sleep(0.5)  # Brief wait for WS to bind
+    time.sleep(0.5)
     print(f"  [+] WebSocket serveur demarre sur le port {actual_ws_port}")
 
-    # Start HTTP server
+    # Start HTTP server in background thread
     httpd = HTTPServer((host, http_port), MailShieldHTTPHandler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
     print(f"  [+] HTTP serveur demarre sur le port {http_port}")
-    print(f"  [+] Ouvrez http://{host}:{http_port} dans votre navigateur")
+
+    return host, http_port, ws_port, httpd
+
+
+def main_webview():
+    """Launch with pywebview — native window, HTTP API still runs in background"""
+    host, http_port, ws_port, httpd = _common_init()
+
+    print("""
+    ==========================================================
+    |           MailShield Pro v2.0.0                         |
+    |           Fenetre native (pywebview)                    |
+    |           Filtrage Intelligent + Protection Avancee     |
+    ==========================================================
+    """)
+    print(f"  [*] API HTTP : http://{host}:{http_port}")
+    print(f"  [*] Base de donnees : {DB_PATH}")
+    print(f"  [*] Quarantaine : {QUARANTINE_DIR}")
     print()
 
-    webbrowser.open(f"http://{host}:{http_port}")
+    window = webview.create_window(
+        f"MailShield Pro v{VERSION}",
+        f"http://{host}:{http_port}",
+        width=1360,
+        height=860,
+        min_size=(1000, 650),
+        background_color="#0f0f13",
+    )
+
+    def on_loaded():
+        print("  [+] Dashboard charge dans la fenetre native")
+
+    window.events.loaded += on_loaded
 
     try:
-        httpd.serve_forever()
-    except KeyboardInterrupt:
-        print("\n  [*] Arret de MailShield Pro...")
+        webview.start(debug=False)
+    finally:
         engine.running = False
         httpd.shutdown()
+        print("  [*] MailShield Pro ferme.")
+
+
+def main():
+    headless = "--headless" in sys.argv
+    if headless:
+        sys.argv.remove("--headless")
+
+    if not headless and HAS_WEBVIEW:
+        print("  [*] pywebview detecte -- lancement en mode fenetre native")
+        main_webview()
+    else:
+        host, http_port, ws_port, httpd = _common_init()
+
+        print("""
+    ==========================================================
+    |           MailShield Pro v2.0.0                         |
+    |           Client Email Securise                         |
+    |           Filtrage Intelligent + Protection Avancee     |
+    ==========================================================
+        """)
+        print(f"  [*] Dashboard : http://{host}:{http_port}")
+        print(f"  [*] Base de donnees : {DB_PATH}")
+        print(f"  [*] Quarantaine : {QUARANTINE_DIR}")
+        print(f"  [*] Log : {LOG_PATH}")
+        print()
+
+        if not headless:
+            webbrowser.open(f"http://{host}:{http_port}")
+
+        try:
+            # Keep main thread alive
+            while engine.running:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            print("\n  [*] Arret de MailShield Pro...")
+            engine.running = False
+            httpd.shutdown()
 
 if __name__ == "__main__":
     main()

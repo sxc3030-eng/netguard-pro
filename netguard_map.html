@@ -105,6 +105,10 @@ body{font-family:'Outfit',sans-serif;background:var(--bg);color:var(--text);heig
 .tag-bot{background:#3d1220;color:#ff1a4d}
 
 .section-title{padding:10px 12px 4px;font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.08em}
+
+/* Live stats in titlebar */
+.live-stat{display:flex;align-items:center;gap:4px;font-size:11px;font-family:'Geist Mono',monospace}
+.live-stat .dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
 </style>
 </head>
 <body>
@@ -128,12 +132,19 @@ body{font-family:'Outfit',sans-serif;background:var(--bg);color:var(--text);heig
     <div style="display:flex;gap:6px">
       <button class="mode-btn active" id="mode-view" onclick="setMode('view')">👁 Vue</button>
       <button class="mode-btn" id="mode-select" onclick="setMode('select')">⬚ Sélection</button>
+      <button class="mode-btn" onclick="fixMyLocation()" title="Corriger ma position sur la carte">📍 Ma position</button>
     </div>
   </div>
   <div style="display:flex;align-items:center;gap:12px">
     <div style="display:flex;align-items:center;gap:6px">
       <div class="status-dot" id="dot"></div>
       <span style="font-size:11px" id="conn-status">Connexion…</span>
+    </div>
+    <div style="display:flex;gap:12px;font-size:11px;font-family:'Geist Mono',monospace">
+      <span style="color:var(--blue)"><span id="live-ips">0</span> IPs</span>
+      <span style="color:var(--red)"><span id="live-blocked">0</span> bloquées</span>
+      <span style="color:var(--amber)"><span id="live-countries">0</span> pays</span>
+      <span style="color:var(--green)"><span id="live-arcs">0</span> conn.</span>
     </div>
     <a href="netguard_dashboard.html" class="btn" style="text-decoration:none;font-size:11px;padding:4px 10px">← Dashboard</a>
   </div>
@@ -217,7 +228,8 @@ body{font-family:'Outfit',sans-serif;background:var(--bg);color:var(--text);heig
     </div>
 
     <!-- Légende -->
-    <div style="position:absolute;bottom:14px;left:14px;background:var(--bg2)dd;border:1px solid var(--border);border-radius:8px;padding:10px 14px;display:flex;gap:14px">
+    <div style="position:absolute;bottom:14px;left:14px;background:var(--bg2)dd;border:1px solid var(--border);border-radius:8px;padding:10px 14px;display:flex;gap:14px;flex-wrap:wrap">
+      <span style="font-size:11px;color:var(--text2);display:flex;align-items:center;gap:5px"><span style="width:8px;height:8px;border-radius:50%;background:var(--blue);display:inline-block;box-shadow:0 0 6px var(--blue)"></span>Mon réseau</span>
       <span style="font-size:11px;color:var(--text2);display:flex;align-items:center;gap:5px"><span style="width:8px;height:8px;border-radius:50%;background:var(--green);display:inline-block"></span>Permis</span>
       <span style="font-size:11px;color:var(--text2);display:flex;align-items:center;gap:5px"><span style="width:8px;height:8px;border-radius:50%;background:var(--amber);display:inline-block"></span>Alerte</span>
       <span style="font-size:11px;color:var(--text2);display:flex;align-items:center;gap:5px"><span style="width:8px;height:8px;border-radius:50%;background:var(--red);display:inline-block"></span>Bloqué</span>
@@ -260,9 +272,9 @@ let lastPktCount = 0;
 // Selection box state
 let selStart = null, selRect = null;
 
-const FLAGS = {RU:'🇷🇺',CN:'🇨🇳',KP:'🇰🇵',IR:'🇮🇷',KR:'🇰🇷',BR:'🇧🇷',NG:'🇳🇬',IN:'🇮🇳',US:'🇺🇸',DE:'🇩🇪',FR:'🇫🇷',NL:'🇳🇱',GB:'🇬🇧',JP:'🇯🇵'};
-const COUNTRY_NAMES = {RU:'Russie',CN:'Chine',KP:'Corée du Nord',IR:'Iran',KR:'Corée du Sud',BR:'Brésil',NG:'Nigeria',IN:'Inde',US:'États-Unis',DE:'Allemagne',FR:'France',NL:'Pays-Bas',GB:'Royaume-Uni',JP:'Japon'};
-const COUNTRY_COORDS = {RU:[37.6,55.75],CN:[116.4,39.9],KP:[125.75,39.0],IR:[51.4,35.7],KR:[126.9,37.5],BR:[-47.9,-15.8],NG:[7.5,9.1],IN:[77.2,28.6],US:[-98.0,39.5],DE:[13.4,52.5],FR:[2.35,48.85],NL:[4.9,52.37],GB:[-0.12,51.5],JP:[139.7,35.7]};
+const FLAGS = {AF:'🇦🇫',AL:'🇦🇱',DZ:'🇩🇿',AR:'🇦🇷',AU:'🇦🇺',AT:'🇦🇹',BD:'🇧🇩',BY:'🇧🇾',BE:'🇧🇪',BR:'🇧🇷',BG:'🇧🇬',CA:'🇨🇦',CL:'🇨🇱',CN:'🇨🇳',CO:'🇨🇴',HR:'🇭🇷',CZ:'🇨🇿',DK:'🇩🇰',EG:'🇪🇬',EE:'🇪🇪',FI:'🇫🇮',FR:'🇫🇷',DE:'🇩🇪',GR:'🇬🇷',HK:'🇭🇰',HU:'🇭🇺',IN:'🇮🇳',ID:'🇮🇩',IR:'🇮🇷',IQ:'🇮🇶',IE:'🇮🇪',IL:'🇮🇱',IT:'🇮🇹',JP:'🇯🇵',KZ:'🇰🇿',KE:'🇰🇪',KP:'🇰🇵',KR:'🇰🇷',LV:'🇱🇻',LT:'🇱🇹',MY:'🇲🇾',MX:'🇲🇽',MA:'🇲🇦',NL:'🇳🇱',NZ:'🇳🇿',NG:'🇳🇬',NO:'🇳🇴',PK:'🇵🇰',PH:'🇵🇭',PL:'🇵🇱',PT:'🇵🇹',RO:'🇷🇴',RU:'🇷🇺',SA:'🇸🇦',SG:'🇸🇬',ZA:'🇿🇦',ES:'🇪🇸',SE:'🇸🇪',CH:'🇨🇭',TW:'🇹🇼',TH:'🇹🇭',TR:'🇹🇷',UA:'🇺🇦',AE:'🇦🇪',GB:'🇬🇧',US:'🇺🇸',VN:'🇻🇳',VE:'🇻🇪'};
+const COUNTRY_NAMES = {AF:'Afghanistan',AL:'Albanie',DZ:'Algérie',AR:'Argentine',AU:'Australie',AT:'Autriche',BD:'Bangladesh',BY:'Biélorussie',BE:'Belgique',BR:'Brésil',BG:'Bulgarie',CA:'Canada',CL:'Chili',CN:'Chine',CO:'Colombie',HR:'Croatie',CZ:'Tchéquie',DK:'Danemark',EG:'Égypte',EE:'Estonie',FI:'Finlande',FR:'France',DE:'Allemagne',GR:'Grèce',HK:'Hong Kong',HU:'Hongrie',IN:'Inde',ID:'Indonésie',IR:'Iran',IQ:'Irak',IE:'Irlande',IL:'Israël',IT:'Italie',JP:'Japon',KZ:'Kazakhstan',KE:'Kenya',KP:'Corée du Nord',KR:'Corée du Sud',LV:'Lettonie',LT:'Lituanie',MY:'Malaisie',MX:'Mexique',MA:'Maroc',NL:'Pays-Bas',NZ:'Nouvelle-Zélande',NG:'Nigeria',NO:'Norvège',PK:'Pakistan',PH:'Philippines',PL:'Pologne',PT:'Portugal',RO:'Roumanie',RU:'Russie',SA:'Arabie Saoudite',SG:'Singapour',ZA:'Afrique du Sud',ES:'Espagne',SE:'Suède',CH:'Suisse',TW:'Taïwan',TH:'Thaïlande',TR:'Turquie',UA:'Ukraine',AE:'Émirats arabes',GB:'Royaume-Uni',US:'États-Unis',VN:'Vietnam',VE:'Venezuela'};
+const COUNTRY_COORDS = {AF:[69.2,34.5],AL:[19.8,41.3],DZ:[3.0,36.8],AR:[-58.4,-34.6],AU:[149.1,-35.3],AT:[16.4,48.2],BD:[90.4,23.7],BY:[27.6,53.9],BE:[4.4,50.8],BR:[-47.9,-15.8],BG:[23.3,42.7],CA:[-75.7,45.4],CL:[-70.6,-33.4],CN:[116.4,39.9],CO:[-74.1,4.7],HR:[16.0,45.8],CZ:[14.4,50.1],DK:[12.6,55.7],EG:[31.2,30.0],EE:[24.7,59.4],FI:[24.9,60.2],FR:[2.35,48.85],DE:[13.4,52.5],GR:[23.7,37.97],HK:[114.2,22.3],HU:[19.0,47.5],IN:[77.2,28.6],ID:[106.8,-6.2],IR:[51.4,35.7],IQ:[44.4,33.3],IE:[-6.3,53.3],IL:[35.2,31.8],IT:[12.5,41.9],JP:[139.7,35.7],KZ:[71.4,51.1],KE:[36.8,-1.3],KP:[125.75,39.0],KR:[126.9,37.5],LV:[24.1,56.9],LT:[25.3,54.7],MY:[101.7,3.1],MX:[-99.1,19.4],MA:[-6.8,34.0],NL:[4.9,52.37],NZ:[174.8,-41.3],NG:[7.5,9.1],NO:[10.8,59.9],PK:[73.0,33.7],PH:[121.0,14.6],PL:[21.0,52.2],PT:[-9.1,38.7],RO:[26.1,44.4],RU:[37.6,55.75],SA:[46.7,24.7],SG:[103.8,1.35],ZA:[28.0,-26.2],ES:[-3.7,40.4],SE:[18.1,59.3],CH:[7.45,46.95],TW:[121.5,25.0],TH:[100.5,13.8],TR:[32.9,39.9],UA:[30.5,50.4],AE:[54.4,24.5],GB:[-0.12,51.5],US:[-98.0,39.5],VN:[105.8,21.0],VE:[-66.9,10.5]};
 
 // Classifier le type d'organisation
 function classifyOrg(org) {
@@ -329,12 +341,17 @@ async function initMap() {
     g.append('path').datum(grat).attr('d',path).attr('fill','none').attr('stroke','#ffffff04').attr('stroke-width',0.5);
     mapReady = true;
     document.getElementById('conn-status').textContent = 'Carte chargée…';
+
+    // Add "my location" marker
+    addMyLocationMarker();
+
     window.addEventListener('resize', () => {
       const nW = wrap.clientWidth, nH = wrap.clientHeight;
       svg.attr('width',nW).attr('height',nH);
       projection.scale(nW/6.3).translate([nW/2,nH/2]);
       g.selectAll('path').attr('d',path);
       redrawDots();
+      addMyLocationMarker();
     });
   } catch(e) { console.error(e); }
 
@@ -343,7 +360,82 @@ async function initMap() {
      .on('mousemove.sel', onSelMove)
      .on('mouseup.sel',   onSelEnd);
 
+  // Try to get our real public IP location
+  fetchMyLocation();
+
   connectWS();
+}
+
+let myCity = '';
+function addMyLocationMarker() {
+  if (!mapReady) return;
+  g.selectAll('.my-loc').remove();
+  const [mx, my] = projection(localCoords);
+  if (!mx || !my) return;
+  // Outer pulsing ring
+  g.append('circle').attr('class','my-loc')
+    .attr('cx',mx).attr('cy',my).attr('r',12)
+    .attr('fill','none').attr('stroke','#4d9fff').attr('stroke-width',1).attr('opacity',.25);
+  // Inner ring
+  g.append('circle').attr('class','my-loc')
+    .attr('cx',mx).attr('cy',my).attr('r',7)
+    .attr('fill','none').attr('stroke','#4d9fff').attr('stroke-width',1.5).attr('opacity',.5);
+  // Solid center
+  g.append('circle').attr('class','my-loc')
+    .attr('cx',mx).attr('cy',my).attr('r',4)
+    .attr('fill','#4d9fff').attr('opacity',.9)
+    .style('cursor','pointer')
+    .on('click', () => { if(myIP) showIPPanel(myIP); });
+  // Label
+  const label = myCity ? `Mon réseau (${myCity})` : 'Mon réseau';
+  g.append('text').attr('class','my-loc my-loc-label')
+    .attr('x',mx+10).attr('y',my+4)
+    .attr('fill','#4d9fff').attr('font-size','10px').attr('font-weight','600').attr('font-family','Outfit,sans-serif')
+    .text(label);
+}
+
+async function fetchMyLocation() {
+  // Try multiple free geo APIs (fallback chain)
+  // Check if user manually set location
+  const saved = localStorage.getItem('ng_my_location');
+  if (saved) {
+    try {
+      const s = JSON.parse(saved);
+      if (s.lat && s.lon) {
+        localCoords = [s.lon, s.lat];
+        myIP = s.ip || 'Manuel';
+        myCity = s.city || '';
+        console.log(`[Map] Position manuelle chargée: ${s.city} (${s.lat}, ${s.lon})`);
+        addMyLocationMarker();
+        return;
+      }
+    } catch(_){}
+  }
+
+  const apis = [
+    // ipwho.is — illimité, HTTPS, assez précis
+    {url:'https://ipwho.is/', parse: d => d.success !== false ? {lat:d.latitude,lon:d.longitude,ip:d.ip,city:d.city,country:d.country_code} : null},
+    // ip-api.com — 45 req/min, très précis (HTTP only on free tier)
+    {url:'http://ip-api.com/json/?fields=status,query,city,country,countryCode,lat,lon', parse: d => d.status==='success' ? {lat:d.lat,lon:d.lon,ip:d.query,city:d.city,country:d.countryCode} : null},
+    // ipapi.co — 1000/jour gratuit
+    {url:'https://ipapi.co/json/', parse: d => d.latitude ? {lat:d.latitude,lon:d.longitude,ip:d.ip,city:d.city,country:d.country_code} : null},
+  ];
+  for (const api of apis) {
+    try {
+      const res = await fetch(api.url, {signal: AbortSignal.timeout(4000)});
+      const d = await res.json();
+      const result = api.parse(d);
+      if (result && result.lat && result.lon) {
+        localCoords = [result.lon, result.lat];
+        myIP = result.ip;
+        myCity = result.city || '';
+        console.log(`[Map] Mon réseau détecté: ${result.ip} — ${result.city}, ${result.country} (${result.lat}, ${result.lon}) via ${api.url}`);
+        addMyLocationMarker();
+        return; // Success, stop trying
+      }
+    } catch(_) { /* try next */ }
+  }
+  console.warn('[Map] Impossible de détecter la localisation — fallback FR');
 }
 
 // ── Selection box ─────────────────────────────────────────────────────────
@@ -541,6 +633,7 @@ function renderIPList(filter = 'all') {
   if (!el) return;
   const search = document.getElementById('ip-search').value.toLowerCase();
   let ips = Object.entries(ipData)
+    .filter(([ip]) => !ip.startsWith('geo-'))
     .filter(([ip]) => !search || ip.includes(search))
     .filter(([ip, d]) => filter==='all' || (filter==='block' && blockedIPs.has(ip)) || (filter==='active' && !blockedIPs.has(ip)))
     .sort((a,b) => b[1].hits - a[1].hits)
@@ -733,6 +826,102 @@ function redrawDots() {
   });
 }
 
+// ── Interaction arcs (source → destination) ──────────────────────────────
+let arcElements = []; // track arc SVG elements for cleanup
+const MAX_ARCS = 40;
+let myIP = null; // our local public IP position (center of arcs)
+
+function drawArc(srcCoords, dstCoords, color, status) {
+  if (!mapReady || !srcCoords || !dstCoords) return;
+  const [sx, sy] = projection(srcCoords);
+  const [dx, dy] = projection(dstCoords);
+  if (!sx || !sy || !dx || !dy) return;
+
+  // Curved arc via quadratic bezier
+  const mx = (sx + dx) / 2;
+  const my = (sy + dy) / 2 - Math.abs(dx - sx) * 0.3; // curve upward
+  const pathData = `M${sx},${sy} Q${mx},${my} ${dx},${dy}`;
+
+  const arc = g.append('path')
+    .attr('d', pathData)
+    .attr('fill', 'none')
+    .attr('stroke', color)
+    .attr('stroke-width', status === 'block' ? 1.5 : 1)
+    .attr('opacity', 0)
+    .attr('stroke-dasharray', status === 'block' ? '4,3' : 'none')
+    .style('pointer-events', 'none');
+
+  arc.transition().duration(400).attr('opacity', 0.5)
+    .transition().delay(1500).duration(1000).attr('opacity', 0).remove();
+
+  // Animated dot along the arc
+  const dot = g.append('circle')
+    .attr('cx', sx).attr('cy', sy).attr('r', 2)
+    .attr('fill', color).attr('opacity', 0.9)
+    .style('pointer-events', 'none');
+
+  dot.transition().duration(1200)
+    .attrTween('cx', () => {
+      return t => {
+        const ct = 1 - t;
+        return ct*ct*sx + 2*ct*t*mx + t*t*dx;
+      };
+    })
+    .attrTween('cy', () => {
+      return t => {
+        const ct = 1 - t;
+        return ct*ct*sy + 2*ct*t*my + t*t*dy;
+      };
+    })
+    .transition().duration(300).attr('opacity', 0).remove();
+
+  arcElements.push(arc);
+  if (arcElements.length > MAX_ARCS) {
+    const old = arcElements.shift();
+    old.remove();
+  }
+}
+
+function getIPCoords(ip, data) {
+  if (data && data.lon != null && data.lat != null) return [data.lon, data.lat];
+  // Try fallback
+  const country = (data && data.country) || guessCountry(ip) || getCountryFallback(ip);
+  if (country && COUNTRY_COORDS[country]) {
+    const parts = ip.split('.').map(Number);
+    const ox = ((parts[2]*17+parts[3]*31)%100)/100*10-5;
+    const oy = ((parts[2]*13+parts[3]*7)%100)/100*6-3;
+    return [COUNTRY_COORDS[country][0]+ox, COUNTRY_COORDS[country][1]+oy];
+  }
+  return null;
+}
+
+// My machine's approximate location (will be set from first local IP or FR default)
+let localCoords = COUNTRY_COORDS['FR'] ? [COUNTRY_COORDS['FR'][0], COUNTRY_COORDS['FR'][1]] : [2.35, 48.85];
+
+function drawInteraction(pkt) {
+  if (!mapReady) return;
+  const srcIP = pkt.src;
+  const dstIP = pkt.dst;
+  if (!srcIP) return;
+
+  const srcData = ipData[srcIP] || {};
+  const srcCoords = getIPCoords(srcIP, srcData);
+
+  // Destination: if private, use local coords
+  let dstCoords;
+  if (isPrivate(dstIP)) {
+    dstCoords = localCoords;
+  } else {
+    const dstData = ipData[dstIP] || {};
+    dstCoords = getIPCoords(dstIP, dstData);
+  }
+
+  if (!srcCoords || !dstCoords) return;
+
+  const color = pkt.status === 'block' ? '#ff4d6a' : pkt.status === 'warn' ? '#ffb347' : '#3dffb455';
+  drawArc(srcCoords, dstCoords, color, pkt.status);
+}
+
 function showTooltip(event, ip, data) {
   const tt = document.getElementById('tooltip');
   document.getElementById('tt-ip').textContent = ip;
@@ -772,68 +961,128 @@ function isPrivate(ip) {
          ip === '0.0.0.0' || ip === '255.255.255.255';
 }
 
+// Assign geo coords to an IP using all available fallbacks
+function assignGeo(ip, pkt) {
+  if (!ipData[ip]) ipData[ip] = {hits:0, status:'allow'};
+  const d = ipData[ip];
+  if (pkt) {
+    d.status = pkt.status || d.status;
+    d.reason = pkt.reason || d.reason || '';
+    d.lastSeen = pkt.t || d.lastSeen;
+    if (pkt.country) d.country = pkt.country;
+    if (pkt.city) d.city = pkt.city;
+    if (pkt.lat != null) d.lat = pkt.lat;
+    if (pkt.lon != null) d.lon = pkt.lon;
+    if (pkt.org) d.org = pkt.org;
+    if (pkt.asn) d.asn = pkt.asn;
+  }
+  // Fallback: get coords from country
+  if (d.lat == null) {
+    const country = d.country || (pkt && pkt.country) || getCountryFallback(ip);
+    if (country && COUNTRY_COORDS[country]) {
+      d.country = country;
+      const parts = ip.split('.').map(Number);
+      const ox = ((parts[2]*17+parts[3]*31)%100)/100*10-5;
+      const oy = ((parts[2]*13+parts[3]*7)%100)/100*6-3;
+      d.lon = COUNTRY_COORDS[country][0]+ox;
+      d.lat = COUNTRY_COORDS[country][1]+oy;
+    }
+  }
+  return d;
+}
+
+let lastSeenPktKey = ''; // deduplicate identical state broadcasts
+let arcThrottle = 0;
+
 function handleMsg(msg) {
   if (msg.type === 'state') {
     blockedIPs = new Set(msg.blocked_ips || []);
 
     const pkts = msg.recent_packets || [];
 
-    // Traiter chaque paquet unique
-    pkts.forEach(pkt => {
+    // Draw arcs for newest packets only (avoid re-drawing same arcs)
+    const pktKey = pkts.length ? (pkts[0].t + pkts[0].src + (pkts[0].dst||'')) : '';
+    const isNewData = pktKey !== lastSeenPktKey;
+    lastSeenPktKey = pktKey;
+
+    // Traiter chaque paquet
+    pkts.forEach((pkt, i) => {
       const ip = pkt.src;
       if (!ip || isPrivate(ip)) return;
 
-      const existed = !!ipData[ip];
-      if (!ipData[ip]) ipData[ip] = {hits:0, status:'allow'};
-      ipData[ip].hits++;
-      ipData[ip].status = pkt.status;
-      ipData[ip].reason = pkt.reason || '';
-      ipData[ip].lastSeen = pkt.t;
-      if (pkt.country) ipData[ip].country = pkt.country;
-      if (pkt.city)    ipData[ip].city    = pkt.city;
-      if (pkt.lat != null) ipData[ip].lat = pkt.lat;
-      if (pkt.lon != null) ipData[ip].lon = pkt.lon;
+      const d = assignGeo(ip, pkt);
+      d.hits++;
+      if (d.lat != null) addOrUpdateDot(ip, d);
 
-      // Géo fallback basé sur l'IP (offset stable)
-      if (ipData[ip].lat == null) {
-        const country = pkt.country || getCountryFallback(ip);
-        if (country && COUNTRY_COORDS[country]) {
-          ipData[ip].country = country;
-          const parts = ip.split('.').map(Number);
-          const ox = ((parts[2] * 17 + parts[3] * 31) % 100) / 100 * 10 - 5;
-          const oy = ((parts[2] * 13 + parts[3] * 7) % 100) / 100 * 6 - 3;
-          ipData[ip].lon = COUNTRY_COORDS[country][0] + ox;
-          ipData[ip].lat = COUNTRY_COORDS[country][1] + oy;
-        }
+      // Draw interaction arc for newest packets (max 5 per update to avoid lag)
+      if (isNewData && i < 5 && Date.now() - arcThrottle > 200) {
+        drawInteraction(pkt);
       }
+    });
+    if (isNewData) arcThrottle = Date.now();
 
-      if (ipData[ip].lat != null) addOrUpdateDot(ip, ipData[ip]);
+    // Also process destination IPs (outgoing connections)
+    pkts.forEach(pkt => {
+      const dstIP = pkt.dst;
+      if (!dstIP || isPrivate(dstIP)) return;
+      if (!ipData[dstIP]) {
+        const d = assignGeo(dstIP, null);
+        d.hits = (d.hits || 0) + 1;
+        d.status = 'allow';
+        if (d.lat != null) addOrUpdateDot(dstIP, d);
+      }
     });
 
-    // Afficher aussi les top_ips du backend
+    // Afficher aussi les top_ips du backend (now includes geo data)
     if (msg.top_ips) {
       msg.top_ips.forEach(item => {
         const ip = item.ip;
         if (!ip || isPrivate(ip)) return;
         if (!ipData[ip]) ipData[ip] = {hits: item.hits, status:'warn'};
         else ipData[ip].hits = Math.max(ipData[ip].hits, item.hits);
-        if (ipData[ip].lat == null) {
-          const country = guessCountry(ip);
-          if (country && COUNTRY_COORDS[country]) {
-            ipData[ip].country = country;
-            const parts = ip.split('.').map(Number);
-            const ox = ((parts[2]*17+parts[3]*31)%100)/100*10-5;
-            const oy = ((parts[2]*13+parts[3]*7)%100)/100*6-3;
-            ipData[ip].lat = COUNTRY_COORDS[country][1] + oy;
-            ipData[ip].lon = COUNTRY_COORDS[country][0] + ox;
-          }
-        }
+        // Use geo data from backend if available
+        if (item.lat != null) { ipData[ip].lat = item.lat; ipData[ip].lon = item.lon; }
+        if (item.country) ipData[ip].country = item.country;
+        if (item.city) ipData[ip].city = item.city;
+        if (item.org) ipData[ip].org = item.org;
+        assignGeo(ip, null);
         if (ipData[ip].lat != null) addOrUpdateDot(ip, ipData[ip]);
       });
     }
 
-    document.getElementById('s-total').textContent = Object.keys(ipData).length;
+    // Process geo_hits for countries not yet on map — add virtual markers
+    if (msg.geo_hits) {
+      msg.geo_hits.forEach(gh => {
+        const code = gh.country;
+        if (!code || !COUNTRY_COORDS[code]) return;
+        // Create a virtual IP entry for this country if no real IPs from it
+        const hasReal = Object.values(ipData).some(d => d.country === code);
+        if (!hasReal && gh.hits > 0) {
+          const vip = `geo-${code}`;
+          if (!ipData[vip]) {
+            ipData[vip] = {
+              hits: gh.hits, status:'block', country: code,
+              lat: COUNTRY_COORDS[code][1], lon: COUNTRY_COORDS[code][0],
+              city: '', reason: `${gh.hits} attaques`, isVirtual: true
+            };
+            addOrUpdateDot(vip, ipData[vip]);
+          } else {
+            ipData[vip].hits = gh.hits;
+          }
+        }
+      });
+    }
+
+    const realIPs = Object.keys(ipData).filter(k => !k.startsWith('geo-'));
+    const countrySet = new Set(Object.values(ipData).map(d => d.country).filter(Boolean));
+    document.getElementById('s-total').textContent = realIPs.length;
     document.getElementById('s-blocked').textContent = blockedIPs.size;
+    // Live stats in titlebar
+    const el = id => document.getElementById(id);
+    if (el('live-ips')) el('live-ips').textContent = realIPs.length;
+    if (el('live-blocked')) el('live-blocked').textContent = blockedIPs.size;
+    if (el('live-countries')) el('live-countries').textContent = countrySet.size;
+    if (el('live-arcs')) el('live-arcs').textContent = msg.active_conns || 0;
     renderIPList(currentIPFilter);
     renderCountryList();
 
@@ -888,6 +1137,21 @@ const GEO_RANGES = [
   ['TR',[31,135],[37,148],[78,160],[80,252],[81,215],[82,222],[85,104],[88,228],[94,54],[95,9],[176,221],[185,25]],
   ['SA',[31,204],[37,240],[46,184],[78,96],[80,249],[82,148],[88,86],[185,161],[212,118],[213,40]],
   ['SG',[1,32],[27,32],[43,224],[49,213],[58,185],[103,1],[116,0],[119,0],[122,160],[137,132],[175,139],[180,214],[202,154]],
+  ['AU',[1,0],[14,0],[27,32],[43,224],[49,176],[58,0],[101,0],[103,0],[110,0],[115,64],[120,0],[121,0],[122,0],[124,0],[175,0],[203,0],[210,0]],
+  ['CA',[24,0],[47,0],[64,0],[65,0],[66,0],[67,0],[69,0],[70,0],[72,0],[74,0],[76,0],[99,0],[104,0],[107,0],[142,0],[162,0],[173,0],[198,0],[199,0],[204,0],[206,0],[207,0],[209,0]],
+  ['IT',[2,32],[5,90],[31,131],[37,186],[46,37],[62,10],[77,32],[78,6],[79,0],[80,16],[82,48],[83,0],[84,32],[85,32],[87,0],[88,0],[89,96],[91,0],[93,32],[94,32],[95,224],[109,112],[151,0],[176,0],[185,0],[188,0],[193,0],[194,0],[195,0],[213,0],[217,0]],
+  ['ES',[2,152],[5,56],[31,4],[37,11],[46,0],[62,56],[77,224],[79,144],[80,24],[81,32],[82,158],[83,32],[84,72],[85,48],[86,0],[87,216],[88,0],[89,0],[90,160],[94,68],[95,16],[109,64],[151,0],[176,0],[185,0],[188,72],[193,0],[194,0],[195,0],[212,0],[213,0],[217,0]],
+  ['PL',[5,128],[31,0],[37,47],[46,134],[62,128],[77,64],[78,8],[79,184],[80,48],[82,160],[83,0],[84,8],[85,0],[86,0],[87,0],[89,64],[91,192],[93,0],[94,0],[95,40],[109,0],[176,0],[178,0],[185,0],[188,0],[193,0],[194,0],[195,0],[212,0],[213,0],[217,0]],
+  ['SE',[2,248],[5,35],[31,208],[37,0],[46,39],[62,20],[77,105],[78,64],[79,136],[80,232],[81,224],[82,0],[83,0],[84,16],[85,224],[86,0],[87,96],[89,160],[91,0],[94,190],[95,192],[109,0],[176,0],[178,0],[185,0],[188,0],[193,0],[194,0],[195,0],[212,0],[213,0],[217,0]],
+  ['ID',[36,0],[39,0],[43,0],[49,0],[58,0],[103,0],[110,0],[112,0],[114,0],[118,0],[119,0],[120,0],[122,0],[125,0],[180,0],[182,0],[202,0]],
+  ['PK',[39,32],[58,27],[59,103],[103,0],[110,93],[111,68],[113,0],[116,0],[119,0],[122,0],[124,0],[175,0],[182,0],[202,0]],
+  ['TH',[1,0],[14,0],[27,55],[43,0],[49,0],[58,0],[61,0],[101,0],[103,0],[110,0],[118,0],[119,0],[122,0],[124,0],[125,0],[171,0],[175,0],[180,0],[202,0]],
+  ['VN',[1,52],[14,0],[27,64],[36,0],[42,112],[43,0],[49,0],[58,0],[59,0],[101,0],[103,0],[113,0],[115,0],[116,0],[117,0],[118,0],[119,0],[123,0],[171,0],[175,0],[183,0],[202,0],[210,0]],
+  ['MY',[1,8],[14,0],[27,0],[42,0],[43,0],[49,0],[58,0],[60,0],[103,0],[110,0],[113,0],[115,0],[116,0],[118,0],[119,0],[121,0],[122,0],[124,0],[175,0],[180,0],[202,0],[210,0]],
+  ['EG',[2,48],[41,32],[41,64],[41,128],[41,232],[45,96],[102,0],[105,0],[156,0],[196,0],[197,0]],
+  ['MX',[187,0],[189,0],[200,0],[201,0],[189,128],[201,128]],
+  ['BY',[37,44],[46,56],[77,74],[80,94],[82,209],[84,243],[85,142],[86,57],[91,149],[93,84],[95,46],[178,120],[185,100],[188,0],[193,233]],
+  ['RO',[2,16],[5,2],[31,14],[37,120],[46,97],[62,216],[77,81],[78,96],[79,112],[80,96],[81,180],[82,76],[83,103],[84,232],[85,120],[86,104],[89,34],[91,82],[93,113],[94,176],[95,76],[109,96],[176,0],[178,0],[185,0],[188,128],[193,0],[194,0],[195,0]],
 ];
 
 // Convert to lookup-friendly format
@@ -920,13 +1184,73 @@ function guessCountry(ip) {
 }
 
 // Fallback: distribute unknown external IPs across random countries
-const FALLBACK_COUNTRIES = ['US','DE','FR','GB','NL','JP','KR','BR','IN','SG'];
+const FALLBACK_COUNTRIES = ['US','DE','FR','GB','NL','JP','KR','BR','IN','SG','CA','AU','IT','ES','PL','SE','RU','CN','TR','UA'];
 function getCountryFallback(ip) {
   const c = guessCountry(ip);
   if (c) return c;
   // Use IP sum to deterministically pick a country
   const sum = ip.split('.').reduce((a,b) => a + parseInt(b||0), 0);
   return FALLBACK_COUNTRIES[sum % FALLBACK_COUNTRIES.length];
+}
+
+// ── Fix my location ──────────────────────────────────────────────────────
+function fixMyLocation() {
+  // Try browser geolocation first (most accurate — uses GPS/WiFi)
+  if (navigator.geolocation) {
+    const choice = confirm(
+      '📍 Corriger ma position\n\n' +
+      'Cliquer OK pour utiliser la géolocalisation du navigateur (plus précis).\n' +
+      'Cliquer Annuler pour entrer une ville manuellement.'
+    );
+    if (choice) {
+      navigator.geolocation.getCurrentPosition(
+        pos => {
+          localCoords = [pos.coords.longitude, pos.coords.latitude];
+          myCity = 'GPS';
+          localStorage.setItem('ng_my_location', JSON.stringify({
+            lat: pos.coords.latitude, lon: pos.coords.longitude, city:'GPS', ip: myIP
+          }));
+          addMyLocationMarker();
+          showToast('📍 Position mise à jour via GPS', 'var(--green)');
+        },
+        () => { promptManualLocation(); },
+        {enableHighAccuracy:true, timeout:8000}
+      );
+      return;
+    }
+  }
+  promptManualLocation();
+}
+
+function promptManualLocation() {
+  const city = prompt(
+    '📍 Entrez votre ville (ex: Montreal, Toronto, Paris, London):',
+    myCity || ''
+  );
+  if (!city) return;
+
+  // Lookup city via Nominatim (OpenStreetMap — gratuit, illimité)
+  fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(city)}&format=json&limit=1`, {
+    headers: {'Accept': 'application/json'}
+  })
+  .then(r => r.json())
+  .then(results => {
+    if (results.length > 0) {
+      const r = results[0];
+      const lat = parseFloat(r.lat);
+      const lon = parseFloat(r.lon);
+      localCoords = [lon, lat];
+      myCity = city;
+      localStorage.setItem('ng_my_location', JSON.stringify({lat, lon, city, ip: myIP}));
+      addMyLocationMarker();
+      showToast(`📍 Position mise à jour: ${r.display_name.split(',').slice(0,2).join(',')}`, 'var(--green)');
+    } else {
+      showToast('Ville non trouvée — essayez en anglais', 'var(--amber)');
+    }
+  })
+  .catch(() => {
+    showToast('Erreur de recherche', 'var(--red)');
+  });
 }
 
 initMap();

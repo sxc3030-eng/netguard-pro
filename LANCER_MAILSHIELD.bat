@@ -22,16 +22,7 @@ if %errorlevel% neq 0 (
 
 :: Install dependencies silently
 echo [*] Verification des dependances...
-python -c "import websockets" >nul 2>&1
-if %errorlevel% neq 0 (
-    echo [*] Installation de websockets...
-    pip install websockets >nul 2>&1
-)
-python -c "import msal" >nul 2>&1
-if %errorlevel% neq 0 (
-    echo [*] Installation de msal...
-    pip install msal >nul 2>&1
-)
+python -m pip install websockets msal pywebview pystray Pillow >nul 2>&1
 echo [+] Dependances OK.
 
 :: Kill any existing MailShield on ports 8800/8801
@@ -46,8 +37,6 @@ timeout /t 1 >nul 2>&1
 
 echo.
 echo [+] Demarrage de MailShield Pro...
-echo [+] Le dashboard s'ouvrira dans votre navigateur.
-echo [+] Appuyez sur Ctrl+C pour arreter.
 echo.
 
 cd /d "%~dp0mailshield"

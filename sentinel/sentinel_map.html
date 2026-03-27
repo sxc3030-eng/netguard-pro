@@ -1,0 +1,841 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SentinelOS — Network Mapper</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+:root {
+  --bg: #0f0f13; --bg2: #1a1a24; --bg3: #232336;
+  --text: #e2e8f0; --text2: #94a3b8; --accent: #4d9fff;
+  --border: #2a2a3e; --green: #22c55e; --red: #ef4444;
+  --orange: #ff6b35; --purple: #a855f7; --yellow: #eab308;
+  --radius: 10px; --sidebar-w: 300px;
+}
+body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; height: 100vh; overflow: hidden; display: flex; flex-direction: column; }
+
+/* ─── TOPBAR ─── */
+.topbar {
+  height: 56px; background: var(--bg2); border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: space-between; padding: 0 20px; flex-shrink: 0;
+}
+.topbar-left { display: flex; align-items: center; gap: 12px; }
+.topbar-left .logo { font-size: 22px; }
+.topbar-left h1 { font-size: 17px; font-weight: 600; color: var(--text); }
+.topbar-left h1 span { color: var(--accent); }
+.topbar-actions { display: flex; gap: 8px; }
+.btn {
+  padding: 8px 18px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg3); color: var(--text); cursor: pointer; font-size: 13px;
+  display: flex; align-items: center; gap: 6px; transition: all .2s;
+}
+.btn:hover { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.primary:hover { background: #3a8aee; }
+.btn:disabled { opacity: .4; cursor: not-allowed; }
+.btn.scanning { animation: pulse-btn 1.5s ease infinite; }
+@keyframes pulse-btn { 0%,100% { opacity:1; } 50% { opacity:.5; } }
+
+/* ─── MAIN LAYOUT ─── */
+.main { display: flex; flex: 1; overflow: hidden; }
+
+/* ─── SIDEBAR ─── */
+.sidebar {
+  width: var(--sidebar-w); background: var(--bg2); border-right: 1px solid var(--border);
+  display: flex; flex-direction: column; overflow-y: auto; flex-shrink: 0;
+}
+.sidebar-section { padding: 16px; border-bottom: 1px solid var(--border); }
+.sidebar-section h3 { font-size: 12px; text-transform: uppercase; color: var(--text2); margin-bottom: 10px; letter-spacing: .5px; }
+
+/* Network info */
+.net-info-row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 13px; }
+.net-info-row .label { color: var(--text2); }
+.net-info-row .value { color: var(--text); font-family: 'Cascadia Code', monospace; font-size: 12px; }
+
+/* Device list */
+.device-list { list-style: none; }
+.device-item {
+  display: flex; align-items: center; gap: 10px; padding: 8px 10px;
+  border-radius: 8px; cursor: pointer; transition: background .15s; font-size: 13px;
+}
+.device-item:hover { background: var(--bg3); }
+.device-item.selected { background: var(--bg3); border-left: 3px solid var(--accent); }
+.device-icon { font-size: 20px; width: 28px; text-align: center; flex-shrink: 0; }
+.device-info { flex: 1; min-width: 0; }
+.device-name { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.device-ip { font-size: 11px; color: var(--text2); font-family: monospace; }
+.device-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+
+/* Detail panel */
+.detail-panel { padding: 16px; }
+.detail-row { display: flex; justify-content: space-between; padding: 5px 0; font-size: 13px; border-bottom: 1px solid var(--border); }
+.detail-row .dlabel { color: var(--text2); }
+.detail-row .dvalue { color: var(--text); font-family: monospace; font-size: 12px; text-align: right; max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
+.port-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.port-tag {
+  padding: 2px 8px; border-radius: 4px; font-size: 11px;
+  background: var(--bg3); border: 1px solid var(--border); color: var(--text2);
+}
+.port-tag.open { border-color: var(--green); color: var(--green); }
+.scan-port-btn {
+  margin-top: 10px; width: 100%; padding: 8px; border-radius: 8px;
+  background: var(--bg3); border: 1px solid var(--border); color: var(--accent);
+  cursor: pointer; font-size: 12px; text-align: center; transition: all .2s;
+}
+.scan-port-btn:hover { background: var(--accent); color: #fff; }
+
+.no-selection { color: var(--text2); font-size: 13px; text-align: center; padding: 30px 0; }
+
+/* ─── MAP AREA ─── */
+.map-container { flex: 1; position: relative; overflow: hidden; background: var(--bg); }
+.map-container svg { width: 100%; height: 100%; }
+
+/* SVG styles */
+.link-line { stroke: rgba(77, 159, 255, 0.15); stroke-width: 2; }
+.link-line:hover { stroke: rgba(77, 159, 255, 0.4); }
+.node-group { cursor: grab; }
+.node-group:active { cursor: grabbing; }
+.node-circle { stroke-width: 3; fill: var(--bg2); transition: r .2s; }
+.node-circle.selected { stroke-width: 4; filter: drop-shadow(0 0 12px currentColor); }
+.node-icon { font-size: 22px; text-anchor: middle; dominant-baseline: central; pointer-events: none; user-select: none; }
+.node-label {
+  font-size: 11px; fill: var(--text2); text-anchor: middle;
+  pointer-events: none; user-select: none;
+}
+.node-ip {
+  font-size: 10px; fill: var(--text2); text-anchor: middle;
+  pointer-events: none; user-select: none; opacity: .6;
+  font-family: monospace;
+}
+.node-group:hover .node-circle { r: 32; }
+.node-group.selected .node-circle { r: 34; }
+
+/* Scan animation */
+.scan-ring {
+  fill: none; stroke: var(--accent); stroke-width: 2; opacity: 0;
+}
+.scan-ring.active {
+  animation: scan-pulse 2s ease-out infinite;
+}
+@keyframes scan-pulse {
+  0% { r: 28; opacity: .8; } 100% { r: 80; opacity: 0; }
+}
+
+/* Node appear animation */
+@keyframes node-appear {
+  0% { transform: scale(0); opacity: 0; }
+  60% { transform: scale(1.2); }
+  100% { transform: scale(1); opacity: 1; }
+}
+.node-group.new { animation: node-appear .5s ease-out forwards; }
+
+/* Tooltip */
+.tooltip {
+  position: absolute; background: var(--bg3); border: 1px solid var(--border);
+  border-radius: 8px; padding: 10px 14px; font-size: 12px;
+  pointer-events: none; z-index: 100; display: none; min-width: 160px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.4);
+}
+.tooltip .tt-name { font-weight: 600; margin-bottom: 4px; }
+.tooltip .tt-ip { color: var(--text2); font-family: monospace; }
+.tooltip .tt-type { color: var(--accent); margin-top: 2px; }
+
+/* Legend */
+.map-legend {
+  position: absolute; bottom: 16px; right: 16px; background: var(--bg2);
+  border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px;
+  display: flex; flex-wrap: wrap; gap: 8px; max-width: 420px;
+}
+.legend-item { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text2); }
+.legend-dot { width: 10px; height: 10px; border-radius: 50%; }
+
+/* Zoom controls */
+.zoom-controls {
+  position: absolute; top: 16px; right: 16px; display: flex; flex-direction: column; gap: 4px;
+}
+.zoom-btn {
+  width: 36px; height: 36px; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--bg2); color: var(--text); font-size: 18px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; transition: all .15s;
+}
+.zoom-btn:hover { background: var(--accent); color: #fff; }
+
+/* ─── STATUS BAR ─── */
+.statusbar {
+  height: 32px; background: var(--bg2); border-top: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 16px; font-size: 12px; color: var(--text2); flex-shrink: 0;
+}
+
+/* Scan progress */
+.scan-progress {
+  position: absolute; top: 0; left: 0; right: 0; height: 3px;
+  background: var(--bg3); z-index: 50; display: none;
+}
+.scan-progress .bar { height: 100%; background: var(--accent); width: 0; transition: width .3s; }
+.scan-progress.active { display: block; }
+.scan-progress.active .bar { animation: progress-anim 3s ease-in-out forwards; }
+@keyframes progress-anim { 0% { width:0; } 80% { width:90%; } 100% { width:100%; } }
+
+/* ─── Scrollbar ─── */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text2); }
+</style>
+</head>
+<body>
+
+<!-- TOPBAR -->
+<div class="topbar">
+  <div class="topbar-left">
+    <svg width="22" height="22" viewBox="0 0 16 16" fill="none" style="flex-shrink:0"><circle cx="8" cy="8" r="7" stroke="#4d9fff" stroke-width="1.5"/><path d="M4 8h8M8 4v8" stroke="#4d9fff" stroke-width="1.2"/></svg>
+    <h1>SentinelOS <span>Network Mapper</span></h1>
+  </div>
+  <div class="topbar-actions">
+    <button class="btn primary" id="btn-scan" onclick="startScan()">
+      Scan
+    </button>
+    <button class="btn" onclick="autoLayoutAll()">
+      Auto Layout
+    </button>
+    <button class="btn" onclick="saveMapState()">
+      Save
+    </button>
+    <button class="btn" onclick="exportPNG()">
+      Export PNG
+    </button>
+  </div>
+</div>
+
+<div class="main">
+
+  <!-- SIDEBAR -->
+  <div class="sidebar">
+    <!-- Network Info -->
+    <div class="sidebar-section" id="net-info-section">
+      <h3>RESEAU</h3>
+      <div id="net-info">
+        <div class="net-info-row"><span class="label">Gateway</span><span class="value" id="info-gateway">—</span></div>
+        <div class="net-info-row"><span class="label">Sous-reseau</span><span class="value" id="info-subnet">—</span></div>
+        <div class="net-info-row"><span class="label">IP locale</span><span class="value" id="info-localip">—</span></div>
+        <div class="net-info-row"><span class="label">Interface</span><span class="value" id="info-iface">—</span></div>
+      </div>
+    </div>
+
+    <!-- Device List -->
+    <div class="sidebar-section" style="flex:1; overflow-y:auto;">
+      <h3>APPAREILS (<span id="device-count">0</span>)</h3>
+      <ul class="device-list" id="device-list"></ul>
+    </div>
+
+    <!-- Detail Panel -->
+    <div class="sidebar-section" id="detail-section">
+      <h3>DETAILS</h3>
+      <div id="detail-content">
+        <div class="no-selection">Cliquez sur un appareil</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MAP -->
+  <div class="map-container" id="map-container">
+    <div class="scan-progress" id="scan-progress"><div class="bar"></div></div>
+    <svg id="map-svg" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <filter id="glow">
+          <feGaussianBlur stdDeviation="3" result="blur"/>
+          <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+      </defs>
+      <g id="map-group">
+        <g id="links-group"></g>
+        <g id="nodes-group"></g>
+      </g>
+    </svg>
+    <div class="tooltip" id="tooltip"></div>
+    <div class="zoom-controls">
+      <button class="zoom-btn" onclick="zoomIn()">+</button>
+      <button class="zoom-btn" onclick="zoomOut()">-</button>
+      <button class="zoom-btn" onclick="zoomReset()" title="Reset">R</button>
+    </div>
+    <div class="map-legend" id="map-legend"></div>
+  </div>
+</div>
+
+<!-- STATUS BAR -->
+<div class="statusbar">
+  <span id="status-text">Pret. Cliquez sur Scan pour decouvrir le reseau.</span>
+  <span id="status-time"></span>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════════════════════
+
+const DEVICE_TYPES = {
+  router:  { icon: "R",  label: "Routeur",    color: "#ff6b35" },
+  switch:  { icon: "SW", label: "Switch",     color: "#ffa500" },
+  pc:      { icon: "PC", label: "PC",         color: "#4d9fff" },
+  laptop:  { icon: "PC", label: "Laptop",     color: "#4d9fff" },
+  mobile:  { icon: "M",  label: "Mobile",     color: "#a855f7" },
+  printer: { icon: "P",  label: "Imprimante", color: "#22c55e" },
+  server:  { icon: "SV", label: "Serveur",    color: "#ef4444" },
+  iot:     { icon: "IoT",label: "IoT",        color: "#06b6d4" },
+  camera:  { icon: "C",  label: "Camera",     color: "#eab308" },
+  tv:      { icon: "TV", label: "TV/Media",   color: "#8b5cf6" },
+  nas:     { icon: "N",  label: "NAS",        color: "#f97316" },
+  unknown: { icon: "?",  label: "Inconnu",    color: "#6b7280" },
+};
+
+let devices = [];
+let selectedDeviceId = null;
+let isScanning = false;
+
+// SVG pan/zoom state
+let svgScale = 1;
+let svgTranslateX = 0;
+let svgTranslateY = 0;
+let isPanning = false;
+let panStartX = 0, panStartY = 0;
+let isDraggingNode = false;
+let dragTarget = null;
+let dragOffsetX = 0, dragOffsetY = 0;
+
+// ═══════════════════════════════════════════════════════════
+// PYWEBVIEW API
+// ═══════════════════════════════════════════════════════════
+
+function api() { return window.pywebview && window.pywebview.api; }
+
+function callAPI(method) {
+  var args = Array.prototype.slice.call(arguments, 1);
+  var a = api();
+  if (a && typeof a[method] === 'function') {
+    return a[method].apply(a, args);
+  }
+  return Promise.reject('No API');
+}
+
+// ═══════════════════════════════════════════════════════════
+// SCAN
+// ═══════════════════════════════════════════════════════════
+
+function startScan() {
+  if (isScanning) return;
+  isScanning = true;
+
+  var btn = document.getElementById('btn-scan');
+  btn.disabled = true;
+  btn.classList.add('scanning');
+  btn.innerHTML = 'Scan en cours...';
+
+  document.getElementById('scan-progress').classList.add('active');
+  document.getElementById('status-text').textContent = 'Scan du reseau en cours...';
+
+  callAPI('scan_network').then(function(r) {
+    var data = JSON.parse(r);
+    devices = data.devices || [];
+    document.getElementById('device-count').textContent = devices.length;
+    renderDeviceList();
+    renderMap();
+    updateNetworkInfo();
+    document.getElementById('status-text').textContent = devices.length + ' appareils decouverts | Dernier scan: ' + new Date().toLocaleTimeString('fr-FR');
+  }).catch(function(e) {
+    document.getElementById('status-text').textContent = 'Erreur lors du scan: ' + e;
+  }).finally(function() {
+    isScanning = false;
+    btn.disabled = false;
+    btn.classList.remove('scanning');
+    btn.innerHTML = 'Scan';
+    setTimeout(function() {
+      document.getElementById('scan-progress').classList.remove('active');
+    }, 500);
+  });
+}
+
+function updateNetworkInfo() {
+  callAPI('get_network_info').then(function(r) {
+    var info = JSON.parse(r);
+    document.getElementById('info-gateway').textContent = info.gateway || '-';
+    document.getElementById('info-subnet').textContent = info.subnet || '-';
+    document.getElementById('info-localip').textContent = info.local_ip || '-';
+    document.getElementById('info-iface').textContent = info.interface || '-';
+  });
+}
+
+// ═══════════════════════════════════════════════════════════
+// DEVICE LIST (sidebar)
+// ═══════════════════════════════════════════════════════════
+
+function renderDeviceList() {
+  var list = document.getElementById('device-list');
+  list.innerHTML = '';
+  // Sort: router first, then by IP
+  var sorted = devices.slice().sort(function(a, b) {
+    if (a.type === 'router') return -1;
+    if (b.type === 'router') return 1;
+    var pa = a.ip.split('.').map(function(x){return parseInt(x);});
+    var pb = b.ip.split('.').map(function(x){return parseInt(x);});
+    return pa[3] - pb[3];
+  });
+
+  sorted.forEach(function(dev) {
+    var dt = DEVICE_TYPES[dev.type] || DEVICE_TYPES.unknown;
+    var li = document.createElement('li');
+    li.className = 'device-item' + (dev.id === selectedDeviceId ? ' selected' : '');
+    li.setAttribute('data-id', dev.id);
+    li.onclick = function() { selectDevice(dev.id); };
+
+    var label = dev.custom_label || dev.hostname || dev.ip;
+    li.innerHTML =
+      '<span class="device-icon">' + dt.icon + '</span>' +
+      '<div class="device-info">' +
+        '<div class="device-name">' + escapeHtml(label) + '</div>' +
+        '<div class="device-ip">' + dev.ip + '</div>' +
+      '</div>' +
+      '<div class="device-dot" style="background:' + dt.color + '"></div>';
+    list.appendChild(li);
+  });
+}
+
+// ═══════════════════════════════════════════════════════════
+// DETAIL PANEL
+// ═══════════════════════════════════════════════════════════
+
+function selectDevice(id) {
+  selectedDeviceId = id;
+  var dev = devices.find(function(d) { return d.id === id; });
+  if (!dev) return;
+
+  // Update list highlight
+  document.querySelectorAll('.device-item').forEach(function(el) {
+    el.classList.toggle('selected', el.getAttribute('data-id') === id);
+  });
+
+  // Update map highlight
+  document.querySelectorAll('.node-group').forEach(function(el) {
+    var isSelected = el.getAttribute('data-id') === id;
+    el.classList.toggle('selected', isSelected);
+    el.querySelector('.node-circle').classList.toggle('selected', isSelected);
+  });
+
+  // Render detail panel
+  var dt = DEVICE_TYPES[dev.type] || DEVICE_TYPES.unknown;
+  var detail = document.getElementById('detail-content');
+  var portsHtml = '';
+  if (dev.open_ports && dev.open_ports.length > 0) {
+    portsHtml = '<div class="port-tags">';
+    dev.open_ports.forEach(function(p) {
+      portsHtml += '<span class="port-tag open">' + p + '</span>';
+    });
+    portsHtml += '</div>';
+  } else {
+    portsHtml = '<span style="color:var(--text2);font-size:12px">Aucun port ouvert detecte</span>';
+  }
+
+  detail.innerHTML =
+    '<div class="detail-row"><span class="dlabel">Type</span><span class="dvalue">' + dt.icon + ' ' + dt.label + '</span></div>' +
+    '<div class="detail-row"><span class="dlabel">IP</span><span class="dvalue">' + dev.ip + '</span></div>' +
+    '<div class="detail-row"><span class="dlabel">MAC</span><span class="dvalue">' + (dev.mac || '-') + '</span></div>' +
+    '<div class="detail-row"><span class="dlabel">Hostname</span><span class="dvalue">' + escapeHtml(dev.hostname || '-') + '</span></div>' +
+    '<div class="detail-row"><span class="dlabel">Fabricant</span><span class="dvalue">' + escapeHtml(dev.vendor || '-') + '</span></div>' +
+    '<div class="detail-row"><span class="dlabel">Ports</span></div>' +
+    portsHtml +
+    '<button class="scan-port-btn" onclick="deepScanDevice(\'' + dev.ip + '\')">Scan approfondi</button>';
+}
+
+function deepScanDevice(ip) {
+  document.getElementById('status-text').textContent = 'Scan approfondi de ' + ip + '...';
+  callAPI('quick_port_scan', ip).then(function(r) {
+    var data = JSON.parse(r);
+    // Update device with new port data
+    var dev = devices.find(function(d) { return d.ip === ip; });
+    if (dev) {
+      dev.open_ports = data.open_ports || [];
+      selectDevice(dev.id);
+      renderMap();
+    }
+    // Show port services
+    var services = data.port_services || {};
+    var svcText = Object.keys(services).map(function(p) { return p + '/' + services[p]; }).join(', ');
+    document.getElementById('status-text').textContent = ip + ': ' + (svcText || 'Aucun port ouvert');
+  });
+}
+
+// ═══════════════════════════════════════════════════════════
+// MAP RENDERING (SVG)
+// ═══════════════════════════════════════════════════════════
+
+function renderMap() {
+  var linksGroup = document.getElementById('links-group');
+  var nodesGroup = document.getElementById('nodes-group');
+  linksGroup.innerHTML = '';
+  nodesGroup.innerHTML = '';
+
+  if (devices.length === 0) return;
+
+  var container = document.getElementById('map-container');
+  var width = container.clientWidth;
+  var height = container.clientHeight;
+
+  // Auto-layout for devices without saved positions
+  autoLayout(width, height);
+
+  // Find router for drawing links
+  var router = devices.find(function(d) { return d.type === 'router'; });
+
+  // Draw links (from router to each device)
+  if (router) {
+    devices.forEach(function(dev) {
+      if (dev.id === router.id) return;
+      var line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      line.setAttribute('class', 'link-line');
+      line.setAttribute('x1', router.x); line.setAttribute('y1', router.y);
+      line.setAttribute('x2', dev.x); line.setAttribute('y2', dev.y);
+      line.setAttribute('data-from', router.id);
+      line.setAttribute('data-to', dev.id);
+      linksGroup.appendChild(line);
+    });
+  }
+
+  // Draw nodes
+  devices.forEach(function(dev, idx) {
+    var dt = DEVICE_TYPES[dev.type] || DEVICE_TYPES.unknown;
+    var g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    g.setAttribute('class', 'node-group new');
+    g.setAttribute('data-id', dev.id);
+    g.setAttribute('transform', 'translate(' + dev.x + ',' + dev.y + ')');
+    g.style.animationDelay = (idx * 80) + 'ms';
+
+    // Scan ring animation
+    var ring = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    ring.setAttribute('class', 'scan-ring');
+    ring.setAttribute('cx', 0); ring.setAttribute('cy', 0); ring.setAttribute('r', 28);
+    ring.style.stroke = dt.color;
+    g.appendChild(ring);
+
+    // Main circle
+    var circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    circle.setAttribute('class', 'node-circle' + (dev.id === selectedDeviceId ? ' selected' : ''));
+    circle.setAttribute('cx', 0); circle.setAttribute('cy', 0);
+    circle.setAttribute('r', dev.type === 'router' ? 34 : 28);
+    circle.style.stroke = dt.color;
+    circle.style.fill = 'var(--bg2)';
+    g.appendChild(circle);
+
+    // Icon
+    var icon = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    icon.setAttribute('class', 'node-icon');
+    icon.setAttribute('x', 0); icon.setAttribute('y', 2);
+    icon.textContent = dt.icon;
+    g.appendChild(icon);
+
+    // Label
+    var label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    label.setAttribute('class', 'node-label');
+    label.setAttribute('x', 0); label.setAttribute('y', (dev.type === 'router' ? 34 : 28) + 16);
+    var displayName = dev.custom_label || dev.hostname || '';
+    if (displayName.length > 18) displayName = displayName.substring(0, 16) + '..';
+    label.textContent = displayName;
+    g.appendChild(label);
+
+    // IP below label
+    var ipText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    ipText.setAttribute('class', 'node-ip');
+    ipText.setAttribute('x', 0); ipText.setAttribute('y', (dev.type === 'router' ? 34 : 28) + 28);
+    ipText.textContent = dev.ip;
+    g.appendChild(ipText);
+
+    // Events
+    g.addEventListener('mousedown', function(e) { startDragNode(e, dev); });
+    g.addEventListener('click', function(e) {
+      if (!isDraggingNode) selectDevice(dev.id);
+    });
+    g.addEventListener('dblclick', function() { deepScanDevice(dev.ip); });
+    g.addEventListener('mouseenter', function(e) { showTooltip(e, dev); });
+    g.addEventListener('mouseleave', hideTooltip);
+
+    nodesGroup.appendChild(g);
+  });
+
+  updateTransform();
+  renderLegend();
+}
+
+function autoLayout(width, height) {
+  // Only layout devices without positions
+  var router = devices.find(function(d) { return d.type === 'router'; });
+  var needsLayout = devices.filter(function(d) { return d.x === undefined || d.y === undefined; });
+
+  if (needsLayout.length === 0) return;
+
+  var cx = width / 2;
+  var cy = height / 2;
+
+  if (router && (router.x === undefined || router.y === undefined)) {
+    router.x = cx;
+    router.y = cy;
+  }
+  if (router) {
+    cx = router.x;
+    cy = router.y;
+  }
+
+  // Group by type for cleaner layout
+  var groups = {};
+  var others = devices.filter(function(d) { return d.type !== 'router' && (d.x === undefined || d.y === undefined); });
+
+  others.forEach(function(d) {
+    if (!groups[d.type]) groups[d.type] = [];
+    groups[d.type].push(d);
+  });
+
+  var totalOthers = others.length;
+  if (totalOthers === 0) return;
+
+  var angleStep = (2 * Math.PI) / totalOthers;
+  var idx = 0;
+  var baseRadius = Math.min(width, height) * 0.3;
+
+  Object.keys(groups).forEach(function(type) {
+    groups[type].forEach(function(d) {
+      var angle = idx * angleStep - Math.PI / 2;
+      var radius = baseRadius + (idx % 3) * 40;
+      d.x = cx + radius * Math.cos(angle);
+      d.y = cy + radius * Math.sin(angle);
+      idx++;
+    });
+  });
+}
+
+function autoLayoutAll() {
+  // Reset all positions and re-layout
+  devices.forEach(function(d) { d.x = undefined; d.y = undefined; });
+  var container = document.getElementById('map-container');
+  autoLayout(container.clientWidth, container.clientHeight);
+  renderMap();
+}
+
+// ═══════════════════════════════════════════════════════════
+// DRAG & DROP NODES
+// ═══════════════════════════════════════════════════════════
+
+function startDragNode(e, dev) {
+  e.stopPropagation();
+  isDraggingNode = true;
+  dragTarget = dev;
+  var svg = document.getElementById('map-svg');
+  var pt = svg.createSVGPoint();
+  pt.x = e.clientX; pt.y = e.clientY;
+  var ctm = document.getElementById('map-group').getScreenCTM().inverse();
+  var svgPt = pt.matrixTransform(ctm);
+  dragOffsetX = svgPt.x - dev.x;
+  dragOffsetY = svgPt.y - dev.y;
+}
+
+document.addEventListener('mousemove', function(e) {
+  if (isDraggingNode && dragTarget) {
+    var svg = document.getElementById('map-svg');
+    var pt = svg.createSVGPoint();
+    pt.x = e.clientX; pt.y = e.clientY;
+    var ctm = document.getElementById('map-group').getScreenCTM().inverse();
+    var svgPt = pt.matrixTransform(ctm);
+
+    dragTarget.x = svgPt.x - dragOffsetX;
+    dragTarget.y = svgPt.y - dragOffsetY;
+
+    // Update node position
+    var g = document.querySelector('.node-group[data-id="' + dragTarget.id + '"]');
+    if (g) g.setAttribute('transform', 'translate(' + dragTarget.x + ',' + dragTarget.y + ')');
+
+    // Update links
+    updateLinks();
+  } else if (isPanning) {
+    var dx = e.clientX - panStartX;
+    var dy = e.clientY - panStartY;
+    svgTranslateX += dx;
+    svgTranslateY += dy;
+    panStartX = e.clientX;
+    panStartY = e.clientY;
+    updateTransform();
+  }
+});
+
+document.addEventListener('mouseup', function() {
+  if (isDraggingNode && dragTarget) {
+    // Save position
+    callAPI('update_device_position', dragTarget.id, dragTarget.x, dragTarget.y);
+    setTimeout(function() { isDraggingNode = false; dragTarget = null; }, 50);
+  }
+  isPanning = false;
+});
+
+function updateLinks() {
+  var router = devices.find(function(d) { return d.type === 'router'; });
+  if (!router) return;
+  document.querySelectorAll('.link-line').forEach(function(line) {
+    var toId = line.getAttribute('data-to');
+    var dev = devices.find(function(d) { return d.id === toId; });
+    if (dev) {
+      line.setAttribute('x1', router.x); line.setAttribute('y1', router.y);
+      line.setAttribute('x2', dev.x); line.setAttribute('y2', dev.y);
+    }
+  });
+}
+
+// ═══════════════════════════════════════════════════════════
+// PAN & ZOOM
+// ═══════════════════════════════════════════════════════════
+
+var mapContainer = document.getElementById('map-container');
+
+mapContainer.addEventListener('mousedown', function(e) {
+  if (e.target === document.getElementById('map-svg') || e.target.tagName === 'svg') {
+    isPanning = true;
+    panStartX = e.clientX;
+    panStartY = e.clientY;
+    e.preventDefault();
+  }
+});
+
+mapContainer.addEventListener('wheel', function(e) {
+  e.preventDefault();
+  var delta = e.deltaY > 0 ? 0.9 : 1.1;
+  var newScale = Math.max(0.2, Math.min(5, svgScale * delta));
+
+  // Zoom toward cursor position
+  var rect = mapContainer.getBoundingClientRect();
+  var cx = e.clientX - rect.left;
+  var cy = e.clientY - rect.top;
+  svgTranslateX = cx - (cx - svgTranslateX) * (newScale / svgScale);
+  svgTranslateY = cy - (cy - svgTranslateY) * (newScale / svgScale);
+  svgScale = newScale;
+  updateTransform();
+});
+
+function zoomIn() { svgScale = Math.min(5, svgScale * 1.25); updateTransform(); }
+function zoomOut() { svgScale = Math.max(0.2, svgScale * 0.8); updateTransform(); }
+function zoomReset() { svgScale = 1; svgTranslateX = 0; svgTranslateY = 0; updateTransform(); }
+
+function updateTransform() {
+  var g = document.getElementById('map-group');
+  g.setAttribute('transform', 'translate(' + svgTranslateX + ',' + svgTranslateY + ') scale(' + svgScale + ')');
+}
+
+// ═══════════════════════════════════════════════════════════
+// TOOLTIP
+// ═══════════════════════════════════════════════════════════
+
+function showTooltip(e, dev) {
+  if (isDraggingNode) return;
+  var dt = DEVICE_TYPES[dev.type] || DEVICE_TYPES.unknown;
+  var tt = document.getElementById('tooltip');
+  var label = dev.custom_label || dev.hostname || dev.ip;
+  tt.innerHTML =
+    '<div class="tt-name">' + dt.icon + ' ' + escapeHtml(label) + '</div>' +
+    '<div class="tt-ip">' + dev.ip + (dev.mac !== '-' ? ' | ' + dev.mac : '') + '</div>' +
+    '<div class="tt-type">' + dt.label + (dev.vendor ? ' -' + dev.vendor : '') + '</div>' +
+    (dev.open_ports && dev.open_ports.length ? '<div style="margin-top:4px;color:var(--green);font-size:11px">Ports: ' + dev.open_ports.join(', ') + '</div>' : '');
+  tt.style.display = 'block';
+  tt.style.left = (e.clientX + 16) + 'px';
+  tt.style.top = (e.clientY - 20) + 'px';
+}
+
+function hideTooltip() {
+  document.getElementById('tooltip').style.display = 'none';
+}
+
+// ═══════════════════════════════════════════════════════════
+// LEGEND
+// ═══════════════════════════════════════════════════════════
+
+function renderLegend() {
+  var legend = document.getElementById('map-legend');
+  var typesUsed = {};
+  devices.forEach(function(d) { typesUsed[d.type] = true; });
+  legend.innerHTML = '';
+  Object.keys(typesUsed).forEach(function(type) {
+    var dt = DEVICE_TYPES[type] || DEVICE_TYPES.unknown;
+    var item = document.createElement('div');
+    item.className = 'legend-item';
+    item.innerHTML = '<div class="legend-dot" style="background:' + dt.color + '"></div>' + dt.icon + ' ' + dt.label;
+    legend.appendChild(item);
+  });
+}
+
+// ═══════════════════════════════════════════════════════════
+// SAVE / EXPORT
+// ═══════════════════════════════════════════════════════════
+
+function saveMapState() {
+  callAPI('save_map').then(function(r) {
+    var data = JSON.parse(r);
+    document.getElementById('status-text').textContent = 'Carte sauvegardee !';
+    setTimeout(function() {
+      document.getElementById('status-text').textContent = devices.length + ' appareils';
+    }, 3000);
+  });
+}
+
+function exportPNG() {
+  // Use SVG → Canvas → PNG approach
+  var svg = document.getElementById('map-svg');
+  var svgData = new XMLSerializer().serializeToString(svg);
+  var canvas = document.createElement('canvas');
+  var ctx = canvas.getContext('2d');
+  var container = document.getElementById('map-container');
+  canvas.width = container.clientWidth * 2;
+  canvas.height = container.clientHeight * 2;
+  ctx.scale(2, 2);
+
+  // Draw background
+  ctx.fillStyle = '#0f0f13';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  var img = new Image();
+  var blob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+  var url = URL.createObjectURL(blob);
+  img.onload = function() {
+    ctx.drawImage(img, 0, 0, container.clientWidth, container.clientHeight);
+    URL.revokeObjectURL(url);
+
+    // Download
+    var link = document.createElement('a');
+    link.download = 'network_map_' + new Date().toISOString().slice(0,10) + '.png';
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+    document.getElementById('status-text').textContent = 'Carte exportee en PNG !';
+  };
+  img.src = url;
+}
+
+// ═══════════════════════════════════════════════════════════
+// UTILS
+// ═══════════════════════════════════════════════════════════
+
+function escapeHtml(s) {
+  var div = document.createElement('div');
+  div.appendChild(document.createTextNode(s));
+  return div.innerHTML;
+}
+
+// Clock
+setInterval(function() {
+  document.getElementById('status-time').textContent = new Date().toLocaleTimeString('fr-FR');
+}, 1000);
+
+// Initial network info on load
+window.addEventListener('pywebviewready', function() {
+  updateNetworkInfo();
+});
+// Fallback if pywebviewready already fired
+setTimeout(function() {
+  if (api()) updateNetworkInfo();
+}, 500);
+
+</script>
+</body>
+</html>
