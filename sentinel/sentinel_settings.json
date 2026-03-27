@@ -1,5 +1,5 @@
 {
-  "auto_start_agents": false,
+  "auto_start_agents": true,
   "theme": "dark",
   "language": "fr",
   "cortex_port": 8900,

@@ -46,7 +46,7 @@ a{color:inherit;text-decoration:none}
 </style>
 
 <!-- PayPal SDK -->
-<script src="https://www.paypal.com/sdk/js?client-id=sb&currency=USD&intent=subscription" data-sdk-integration-source="button-factory"></script>
+<script src="https://www.paypal.com/sdk/js?client-id=AcxAninrI_ByUMfmwCOmMaulz8IIlXZq9vleo6Xo316ABbCf2AMvK1WSBPNpB4MU0krQKNk1BIgKAQ3N&currency=CAD&intent=subscription&vault=true" data-sdk-integration-source="button-factory"></script>
 </head>
 <body>
 
@@ -59,7 +59,7 @@ a{color:inherit;text-decoration:none}
 
   <div class="plan-info" id="plan-info">
     <div class="plan-name" id="plan-name">Pro</div>
-    <div class="plan-price" id="plan-price">29$ <small>/ mois</small></div>
+    <div class="plan-price" id="plan-price">29 $CA <small>/ mois</small></div>
     <div class="plan-trial">Essai gratuit 30 jours — Annulez à tout moment</div>
   </div>
 
@@ -105,7 +105,7 @@ const plan = params.get('plan') || 'pro';
 
 if (plan === 'enterprise') {
   document.getElementById('plan-name').textContent = 'Enterprise';
-  document.getElementById('plan-price').innerHTML = '99$ <small>/ mois</small>';
+  document.getElementById('plan-price').innerHTML = '99 $CA <small>/ mois</small>';
   document.getElementById('features-pro').style.display = 'none';
   document.getElementById('features-ent').style.display = 'block';
 }
