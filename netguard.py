@@ -18,7 +18,7 @@ import re
 import struct
 import socket
 from collections import defaultdict, deque
-from datetime import datetime
+from datetime import datetime, timedelta
 from dataclasses import dataclass, asdict, field
 from typing import Optional
 import os
@@ -30,8 +30,11 @@ import base64
 try:
     from license_manager import init_license, has_feature, get_trial_banner
     LICENSE = init_license()
+    # Set retention days based on tier
+    _RETENTION_MAP = {"free": 7, "trial": 30, "pro": 30, "enterprise": 365}
 except Exception:
     LICENSE = {"tier": "trial", "features": [], "trial": True, "trial_days_left": 30, "expired": False}
+    _RETENTION_MAP = {"free": 7, "trial": 30, "pro": 30, "enterprise": 365}
     def has_feature(f): return True
     def get_trial_banner(): return ""
 
@@ -150,6 +153,24 @@ class Config:
     wg_config_dir:      str   = "wireguard"
     wg_post_up:         str   = ""
     wg_post_down:       str   = ""
+    # v3.1 — SIEM Integration (Enterprise)
+    siem_enabled:       bool  = False
+    siem_type:          str   = "syslog"   # syslog, splunk_hec, elastic, qradar
+    siem_host:          str   = ""
+    siem_port:          int   = 514
+    siem_protocol:      str   = "udp"      # udp, tcp, https
+    siem_token:         str   = ""         # HEC token (Splunk) or API key (Elastic)
+    siem_index:         str   = "netguard" # Splunk index or Elastic index
+    siem_tls:           bool  = False
+    siem_min_severity:  str   = "medium"   # low, medium, high, critical
+    # v3.1 — Persistent Threat History
+    history_enabled:    bool  = True
+    history_file:       str   = "threat_history.jsonl"
+    history_retention_days: int = 7        # Free: 7, Pro: 30, Enterprise: 365
+    # v3.1 — Multi-Site Monitoring
+    sites:              list  = field(default_factory=lambda: [
+        {"name": "Site principal", "interface": "auto", "enabled": True}
+    ])
 
 CFG = Config()
 
@@ -454,6 +475,257 @@ class NetState:
         self.webhook_log        = deque(maxlen=100)
 
 STATE = NetState()
+
+# ═══════════════════════════════════════════════════════════════════════════
+# v3.1 — SIEM INTEGRATION (Enterprise)
+# ═══════════════════════════════════════════════════════════════════════════
+
+_SEVERITY_ORDER = {"low": 0, "medium": 1, "high": 2, "critical": 3}
+
+def _siem_severity_ok(severity: str) -> bool:
+    return _SEVERITY_ORDER.get(severity, 0) >= _SEVERITY_ORDER.get(CFG.siem_min_severity, 1)
+
+def _format_syslog(threat: dict) -> str:
+    """Format threat as RFC 5424 syslog message."""
+    sev_map = {"low": 6, "medium": 4, "high": 3, "critical": 2}  # syslog severity
+    pri = 8 * 13 + sev_map.get(threat.get("severity", "medium"), 4)  # facility=13 (log audit)
+    ts = threat.get("timestamp", datetime.now().isoformat())
+    host = platform.node()
+    return (f"<{pri}>1 {ts} {host} NetGuardPro - - - "
+            f"[threat src_ip=\"{threat.get('src_ip','')}\" type=\"{threat.get('type','')}\" "
+            f"severity=\"{threat.get('severity','')}\" country=\"{threat.get('country','')}\" "
+            f"blocked=\"{threat.get('blocked', False)}\"] {threat.get('description','')}")
+
+def _format_splunk_hec(threat: dict) -> dict:
+    """Format threat for Splunk HTTP Event Collector."""
+    return {
+        "event": threat,
+        "sourcetype": "netguard:threat",
+        "source": "netguard_pro",
+        "index": CFG.siem_index,
+        "time": threat.get("id", int(time.time() * 1000)) / 1000,
+    }
+
+def _format_elastic(threat: dict) -> dict:
+    """Format threat for Elasticsearch."""
+    doc = dict(threat)
+    doc["@timestamp"] = threat.get("timestamp", datetime.now().isoformat())
+    doc["event.category"] = "threat"
+    doc["event.module"] = "netguard_pro"
+    return doc
+
+def siem_export(threat: dict):
+    """Send a threat event to the configured SIEM. Runs in a background thread."""
+    if not CFG.siem_enabled or not CFG.siem_host:
+        return
+    if not _siem_severity_ok(threat.get("severity", "medium")):
+        return
+    try:
+        stype = CFG.siem_type.lower()
+        if stype == "syslog" or stype == "qradar":
+            msg = _format_syslog(threat).encode("utf-8")
+            if CFG.siem_protocol == "udp":
+                import socket as _sock
+                s = _sock.socket(_sock.AF_INET, _sock.SOCK_DGRAM)
+                s.sendto(msg, (CFG.siem_host, CFG.siem_port))
+                s.close()
+            else:
+                import socket as _sock
+                s = _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM)
+                s.settimeout(5)
+                s.connect((CFG.siem_host, CFG.siem_port))
+                s.sendall(msg + b"\n")
+                s.close()
+        elif stype == "splunk_hec":
+            url = f"{'https' if CFG.siem_tls else 'http'}://{CFG.siem_host}:{CFG.siem_port}/services/collector/event"
+            payload = json.dumps(_format_splunk_hec(threat))
+            req = urllib.request.Request(url, data=payload.encode("utf-8"),
+                                         headers={"Authorization": f"Splunk {CFG.siem_token}",
+                                                  "Content-Type": "application/json"})
+            if CFG.siem_tls:
+                import ssl
+                ctx = ssl.create_default_context()
+                ctx.check_hostname = False
+                ctx.verify_mode = ssl.CERT_NONE
+                urllib.request.urlopen(req, timeout=5, context=ctx)
+            else:
+                urllib.request.urlopen(req, timeout=5)
+        elif stype == "elastic":
+            url = f"{'https' if CFG.siem_tls else 'http'}://{CFG.siem_host}:{CFG.siem_port}/{CFG.siem_index}/_doc"
+            payload = json.dumps(_format_elastic(threat))
+            headers = {"Content-Type": "application/json"}
+            if CFG.siem_token:
+                headers["Authorization"] = f"ApiKey {CFG.siem_token}"
+            req = urllib.request.Request(url, data=payload.encode("utf-8"), headers=headers)
+            if CFG.siem_tls:
+                import ssl
+                ctx = ssl.create_default_context()
+                ctx.check_hostname = False
+                ctx.verify_mode = ssl.CERT_NONE
+                urllib.request.urlopen(req, timeout=5, context=ctx)
+            else:
+                urllib.request.urlopen(req, timeout=5)
+        STATE.webhook_log.appendleft({
+            "ts": datetime.now().strftime("%H:%M:%S"),
+            "type": f"siem_{stype}",
+            "status": "ok",
+            "target": f"{CFG.siem_host}:{CFG.siem_port}",
+        })
+        log.info(f"[SIEM] Exported threat to {stype} ({CFG.siem_host}:{CFG.siem_port})")
+    except Exception as e:
+        STATE.webhook_log.appendleft({
+            "ts": datetime.now().strftime("%H:%M:%S"),
+            "type": f"siem_{CFG.siem_type}",
+            "status": "error",
+            "target": str(e),
+        })
+        log.error(f"[SIEM] Export failed: {e}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# v3.1 — PERSISTENT THREAT HISTORY
+# ═══════════════════════════════════════════════════════════════════════════
+
+HISTORY_FILE = CFG.history_file
+
+def history_append(threat: dict):
+    """Append a threat to the persistent JSONL history file."""
+    if not CFG.history_enabled:
+        return
+    try:
+        with open(HISTORY_FILE, "a", encoding="utf-8") as f:
+            f.write(json.dumps(threat, ensure_ascii=False) + "\n")
+    except Exception as e:
+        log.error(f"[HISTORY] Write failed: {e}")
+
+def history_load(days: int = None, max_items: int = 1000) -> list:
+    """Load threats from persistent history, optionally filtered by age."""
+    if not os.path.exists(HISTORY_FILE):
+        return []
+    if days is None:
+        days = CFG.history_retention_days
+    cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+    results = []
+    try:
+        with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    t = json.loads(line)
+                    if t.get("timestamp", "") >= cutoff:
+                        results.append(t)
+                except json.JSONDecodeError:
+                    continue
+        # Return most recent first, limited
+        results.reverse()
+        return results[:max_items]
+    except Exception as e:
+        log.error(f"[HISTORY] Load failed: {e}")
+        return []
+
+def history_cleanup():
+    """Remove entries older than retention period. Run periodically."""
+    if not os.path.exists(HISTORY_FILE):
+        return
+    cutoff = (datetime.now() - timedelta(days=CFG.history_retention_days)).isoformat()
+    kept = 0
+    try:
+        tmp = HISTORY_FILE + ".tmp"
+        with open(HISTORY_FILE, "r", encoding="utf-8") as fin, \
+             open(tmp, "w", encoding="utf-8") as fout:
+            for line in fin:
+                try:
+                    t = json.loads(line.strip())
+                    if t.get("timestamp", "") >= cutoff:
+                        fout.write(line)
+                        kept += 1
+                except (json.JSONDecodeError, KeyError):
+                    continue
+        os.replace(tmp, HISTORY_FILE)
+        log.info(f"[HISTORY] Cleanup: kept {kept} entries (retention={CFG.history_retention_days}d)")
+    except Exception as e:
+        log.error(f"[HISTORY] Cleanup failed: {e}")
+
+def _history_cleanup_loop():
+    """Background thread: clean history every 6 hours."""
+    while True:
+        time.sleep(6 * 3600)
+        history_cleanup()
+
+threading.Thread(target=_history_cleanup_loop, daemon=True).start()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# v3.1 — MULTI-SITE MONITORING
+# ═══════════════════════════════════════════════════════════════════════════
+
+class SiteMonitor:
+    """Manages per-site packet statistics for multi-site monitoring."""
+    def __init__(self):
+        self.sites: dict = {}   # name -> {stats}
+        self._init_sites()
+
+    def _init_sites(self):
+        for site_cfg in CFG.sites:
+            name = site_cfg.get("name", "Default")
+            self.sites[name] = {
+                "name":      name,
+                "interface": site_cfg.get("interface", "auto"),
+                "enabled":   site_cfg.get("enabled", True),
+                "packets":   0,
+                "threats":   0,
+                "blocked":   0,
+                "bytes_in":  0,
+                "bytes_out": 0,
+                "last_seen": None,
+            }
+
+    def record_packet(self, site_name: str, pkt_len: int, direction: str = "in"):
+        s = self.sites.get(site_name)
+        if not s:
+            return
+        s["packets"] += 1
+        if direction == "in":
+            s["bytes_in"] += pkt_len
+        else:
+            s["bytes_out"] += pkt_len
+        s["last_seen"] = datetime.now().isoformat()
+
+    def record_threat(self, site_name: str):
+        s = self.sites.get(site_name)
+        if s:
+            s["threats"] += 1
+
+    def record_block(self, site_name: str):
+        s = self.sites.get(site_name)
+        if s:
+            s["blocked"] += 1
+
+    def add_site(self, name: str, interface: str = "auto") -> bool:
+        if name in self.sites:
+            return False
+        self.sites[name] = {
+            "name": name, "interface": interface, "enabled": True,
+            "packets": 0, "threats": 0, "blocked": 0,
+            "bytes_in": 0, "bytes_out": 0, "last_seen": None,
+        }
+        CFG.sites.append({"name": name, "interface": interface, "enabled": True})
+        return True
+
+    def remove_site(self, name: str) -> bool:
+        if name not in self.sites or name == "Site principal":
+            return False
+        del self.sites[name]
+        CFG.sites = [s for s in CFG.sites if s.get("name") != name]
+        return True
+
+    def get_state(self) -> list:
+        return list(self.sites.values())
+
+SITE_MONITOR = SiteMonitor()
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -1653,6 +1925,11 @@ def add_threat(src_ip: str, threat_type: str, description: str, severity: str, r
     # Auto-forensic on critical
     if severity == "critical" and CFG.auto_forensic_enabled:
         threading.Thread(target=generate_forensic_report, args=(src_ip, threat_type), daemon=True).start()
+
+    # v3.1 — Persistent history + SIEM export
+    history_append(threat)
+    threading.Thread(target=siem_export, args=(threat,), daemon=True).start()
+    SITE_MONITOR.record_threat("Site principal")
 
     log.warning(f"[THREAT/{severity.upper()}] {threat_type} — {src_ip} — {description}")
     return threat
@@ -3100,6 +3377,18 @@ def build_state_message() -> dict:
             "wg_server_pubkey":   WG_SERVER_PUBKEY,
             "wg_listen_port":     CFG.wg_listen_port,
             "wg_address":         CFG.wg_address,
+            # v3.1 — SIEM
+            "siem_enabled":       CFG.siem_enabled,
+            "siem_type":          CFG.siem_type,
+            "siem_host":          CFG.siem_host,
+            "siem_port":          CFG.siem_port,
+            "siem_tls":           CFG.siem_tls,
+            "siem_min_severity":  CFG.siem_min_severity,
+            # v3.1 — History
+            "history_enabled":         CFG.history_enabled,
+            "history_retention_days":  CFG.history_retention_days,
+            # v3.1 — Multi-site
+            "sites":              SITE_MONITOR.get_state(),
             # License
             "license_tier":       LICENSE.get("tier", "free"),
             "license_trial":      LICENSE.get("trial", False),
@@ -3885,6 +4174,68 @@ async def handle_ws_command(ws, msg: dict):
     elif cmd == "iam_get_sessions":
         await ws.send(json.dumps({"type": "iam_sessions", "sessions": list(IAM_SESSIONS.values())}))
 
+    # ─── v3.1 — SIEM ────────────────────────────────────────────────────
+    elif cmd == "siem_configure":
+        CFG.siem_enabled      = msg.get("enabled", CFG.siem_enabled)
+        CFG.siem_type         = msg.get("type", CFG.siem_type)
+        CFG.siem_host         = msg.get("host", CFG.siem_host)
+        CFG.siem_port         = msg.get("port", CFG.siem_port)
+        CFG.siem_protocol     = msg.get("protocol", CFG.siem_protocol)
+        CFG.siem_token        = msg.get("token", CFG.siem_token)
+        CFG.siem_index        = msg.get("index", CFG.siem_index)
+        CFG.siem_tls          = msg.get("tls", CFG.siem_tls)
+        CFG.siem_min_severity = msg.get("min_severity", CFG.siem_min_severity)
+        save_settings()
+        await ws.send(json.dumps({"type": "siem_configured", "ok": True}))
+
+    elif cmd == "siem_test":
+        test_threat = {
+            "id": int(time.time() * 1000), "timestamp": datetime.now().isoformat(),
+            "src_ip": "192.168.1.100", "type": "SIEM_TEST",
+            "description": "Test event from NetGuard Pro", "severity": "medium",
+            "blocked": False, "country": "CA",
+        }
+        siem_export(test_threat)
+        await ws.send(json.dumps({"type": "siem_test_sent", "ok": True}))
+
+    # ─── v3.1 — HISTORY ─────────────────────────────────────────────────
+    elif cmd == "history_get":
+        days = msg.get("days", CFG.history_retention_days)
+        max_items = msg.get("max", 500)
+        data = history_load(days=days, max_items=max_items)
+        await ws.send(json.dumps({"type": "history_data", "threats": data, "count": len(data)}))
+
+    elif cmd == "history_configure":
+        CFG.history_enabled = msg.get("enabled", CFG.history_enabled)
+        CFG.history_retention_days = msg.get("retention_days", CFG.history_retention_days)
+        save_settings()
+        await ws.send(json.dumps({"type": "history_configured", "ok": True,
+                                   "retention_days": CFG.history_retention_days}))
+
+    elif cmd == "history_cleanup":
+        history_cleanup()
+        await ws.send(json.dumps({"type": "history_cleaned", "ok": True}))
+
+    # ─── v3.1 — MULTI-SITE ──────────────────────────────────────────────
+    elif cmd == "site_add":
+        name = msg.get("name", "")
+        interface = msg.get("interface", "auto")
+        if name:
+            ok = SITE_MONITOR.add_site(name, interface)
+            if ok:
+                save_settings()
+            await ws.send(json.dumps({"type": "site_added", "ok": ok, "name": name}))
+
+    elif cmd == "site_remove":
+        name = msg.get("name", "")
+        ok = SITE_MONITOR.remove_site(name)
+        if ok:
+            save_settings()
+        await ws.send(json.dumps({"type": "site_removed", "ok": ok, "name": name}))
+
+    elif cmd == "site_list":
+        await ws.send(json.dumps({"type": "site_list", "sites": SITE_MONITOR.get_state()}))
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # PYWEBVIEW API — Native window mode (direct JS bridge, no WebSocket)
@@ -4175,6 +4526,21 @@ def save_settings():
             "nac_approved": NAC_APPROVED,
             "nac_denied": NAC_DENIED,
             "nac_policy": NAC_POLICY,
+            # v3.1 — SIEM
+            "siem_enabled": CFG.siem_enabled,
+            "siem_type": CFG.siem_type,
+            "siem_host": CFG.siem_host,
+            "siem_port": CFG.siem_port,
+            "siem_protocol": CFG.siem_protocol,
+            "siem_token": CFG.siem_token,
+            "siem_index": CFG.siem_index,
+            "siem_tls": CFG.siem_tls,
+            "siem_min_severity": CFG.siem_min_severity,
+            # v3.1 — History
+            "history_enabled": CFG.history_enabled,
+            "history_retention_days": CFG.history_retention_days,
+            # v3.1 — Multi-site
+            "sites": CFG.sites,
             "backup_schedule": BACKUP_SCHEDULE,
             "iam_users": {u: {k: v for k, v in d.items() if k != "password_hash"}
                          for u, d in IAM_USERS.items()},
@@ -4272,6 +4638,25 @@ def load_settings():
         CFG.wg_dns          = s.get("wg_dns", "1.1.1.1, 9.9.9.9")
         CFG.wg_endpoint     = s.get("wg_endpoint", "")
         CFG.wg_interface    = s.get("wg_interface", "wg0")
+
+        # v3.1 — SIEM
+        CFG.siem_enabled       = s.get("siem_enabled", False)
+        CFG.siem_type          = s.get("siem_type", "syslog")
+        CFG.siem_host          = s.get("siem_host", "")
+        CFG.siem_port          = s.get("siem_port", 514)
+        CFG.siem_protocol      = s.get("siem_protocol", "udp")
+        CFG.siem_token         = s.get("siem_token", "")
+        CFG.siem_index         = s.get("siem_index", "netguard")
+        CFG.siem_tls           = s.get("siem_tls", False)
+        CFG.siem_min_severity  = s.get("siem_min_severity", "medium")
+        # v3.1 — History (retention enforced by license tier)
+        CFG.history_enabled         = s.get("history_enabled", True)
+        tier = LICENSE.get("tier", "free")
+        max_retention = _RETENTION_MAP.get(tier, 7)
+        CFG.history_retention_days  = min(s.get("history_retention_days", max_retention), max_retention)
+        # v3.1 — Multi-site
+        CFG.sites = s.get("sites", [{"name": "Site principal", "interface": "auto", "enabled": True}])
+        SITE_MONITOR._init_sites()
 
         # v4.0 — New Modules
         global NAC_APPROVED, NAC_DENIED, NAC_POLICY, BACKUP_SCHEDULE, INCIDENTS, INCIDENT_COUNTER, TRAINING_SCORES
