@@ -46,7 +46,7 @@ a{color:inherit;text-decoration:none}
 </style>
 
 <!-- PayPal SDK -->
-<script src="https://www.paypal.com/sdk/js?client-id=AcxAninrI_ByUMfmwCOmMaulz8IIlXZq9vleo6Xo316ABbCf2AMvK1WSBPNpB4MU0krQKNk1BIgKAQ3N&currency=CAD&intent=subscription&vault=true" data-sdk-integration-source="button-factory"></script>
+<script src="https://www.paypal.com/sdk/js?client-id=AcCgZgnTJM8lJniTu1rzSCKchoB1e9vSUTZItmPdzj787efp7zy_NsUvZCvURJDUr-ulyAxOohBQoPyO&vault=true&intent=subscription&currency=CAD" data-sdk-integration-source="button-factory"></script>
 </head>
 <body>
 
@@ -120,10 +120,8 @@ if (window.paypal) {
       label: 'subscribe'
     },
     createSubscription: function(data, actions) {
-      // TODO: Replace with real PayPal plan IDs once created in PayPal dashboard
-      // Pro plan: P-XXXXX  |  Enterprise plan: P-YYYYY
       return actions.subscription.create({
-        plan_id: plan === 'enterprise' ? 'P-ENTERPRISE_PLAN_ID' : 'P-PRO_PLAN_ID'
+        plan_id: plan === 'enterprise' ? 'P-0KN26759CD032611WNHDJOBQ' : 'P-6UV65618EL221023CNHDJR6A'
       });
     },
     onApprove: function(data, actions) {
