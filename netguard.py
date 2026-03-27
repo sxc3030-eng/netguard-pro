@@ -26,6 +26,15 @@ import sys
 import hashlib
 import base64
 
+# License manager
+try:
+    from license_manager import init_license, has_feature, get_trial_banner
+    LICENSE = init_license()
+except Exception:
+    LICENSE = {"tier": "trial", "features": [], "trial": True, "trial_days_left": 30, "expired": False}
+    def has_feature(f): return True
+    def get_trial_banner(): return ""
+
 # Fix pythonw (no console) — redirect None stdout/stderr to devnull
 if sys.stdout is None:
     sys.stdout = open(os.devnull, 'w')
@@ -3091,6 +3100,12 @@ def build_state_message() -> dict:
             "wg_server_pubkey":   WG_SERVER_PUBKEY,
             "wg_listen_port":     CFG.wg_listen_port,
             "wg_address":         CFG.wg_address,
+            # License
+            "license_tier":       LICENSE.get("tier", "free"),
+            "license_trial":      LICENSE.get("trial", False),
+            "license_days_left":  LICENSE.get("trial_days_left", 0),
+            "license_expired":    LICENSE.get("expired", False),
+            "license_banner":     get_trial_banner(),
         }
 
 # ═══════════════════════════════════════════════════════════════════════════
