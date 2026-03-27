@@ -1589,6 +1589,9 @@ def main():
         print("[*] pywebview detecte -- lancement en mode fenetre native")
         main_webview()
     else:
+        if not HAS_WS:
+            print("[ERREUR] websockets non installe. pip install websockets")
+            return
         print("[*] Mode " + ("headless (Cortex)" if headless else "WebSocket"))
         try:
             asyncio.run(main_async())

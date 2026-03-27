@@ -1144,6 +1144,10 @@ def main():
     logger.info(f"  Max storage: {MAX_STORAGE_MB} MB")
     logger.info("=" * 60)
 
+    if not HAS_WS:
+        logger.error("[RecordAgent] websockets non installe. pip install websockets")
+        return
+
     _engine.start()
 
     if headless or not HAS_WEBVIEW:
