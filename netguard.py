@@ -1666,6 +1666,209 @@ def iam_toggle_mfa(username: str) -> dict:
     return {"ok": True, "mfa_enabled": IAM_USERS[username]["mfa_enabled"]}
 
 
+# ─── HTTP Auth Server ────────────────────────────────────────────────────────
+AUTH_TOKENS = {}   # {token: {user, role, name, created_at}}
+USERS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "netguard_users.json")
+
+def _load_users_file() -> dict:
+    """Load users from netguard_users.json"""
+    try:
+        if os.path.exists(USERS_FILE):
+            with open(USERS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception as e:
+        log.warning(f"[AUTH] Could not load users file: {e}")
+    return {"admin": {"password": "", "role": "admin", "name": "Administrateur"}}
+
+def _save_users_file(users: dict):
+    """Save users to netguard_users.json"""
+    try:
+        with open(USERS_FILE, "w", encoding="utf-8") as f:
+            json.dump(users, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        log.warning(f"[AUTH] Could not save users file: {e}")
+
+def _hash_password(password: str, salt: bytes = None) -> str:
+    """Hash password with salt. Format: hex_salt:base64_hash"""
+    if salt is None:
+        salt = os.urandom(16)
+    h = hashlib.sha256(salt + password.encode("utf-8")).digest()
+    return salt.hex() + ":" + base64.b64encode(h).decode()
+
+def _verify_password(password: str, stored: str) -> bool:
+    """Verify password against stored salt:hash"""
+    if not stored or ":" not in stored:
+        return False
+    try:
+        salt_hex, hash_b64 = stored.split(":", 1)
+        salt = bytes.fromhex(salt_hex)
+        expected = hashlib.sha256(salt + password.encode("utf-8")).digest()
+        return base64.b64encode(expected).decode() == hash_b64
+    except Exception:
+        return False
+
+def _generate_token() -> str:
+    """Generate a secure session token"""
+    import secrets
+    return secrets.token_hex(32)
+
+async def _http_auth_handler(reader, writer):
+    """Handle HTTP requests for auth endpoints"""
+    try:
+        request_line = await asyncio.wait_for(reader.readline(), timeout=5)
+        if not request_line:
+            writer.close()
+            return
+        request_text = request_line.decode("utf-8", errors="replace").strip()
+        method, path, _ = request_text.split(" ", 2)
+
+        # Read headers
+        headers = {}
+        content_length = 0
+        while True:
+            line = await asyncio.wait_for(reader.readline(), timeout=5)
+            if line in (b"\r\n", b"\n", b""):
+                break
+            hdr = line.decode("utf-8", errors="replace").strip()
+            if ":" in hdr:
+                k, v = hdr.split(":", 1)
+                headers[k.strip().lower()] = v.strip()
+                if k.strip().lower() == "content-length":
+                    content_length = int(v.strip())
+
+        # Read body
+        body = b""
+        if content_length > 0:
+            body = await asyncio.wait_for(reader.read(min(content_length, 65536)), timeout=5)
+
+        data = {}
+        if body:
+            try:
+                data = json.loads(body)
+            except Exception:
+                pass
+
+        # CORS headers
+        cors = (
+            "Access-Control-Allow-Origin: *\r\n"
+            "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n"
+            "Access-Control-Allow-Headers: Content-Type\r\n"
+        )
+
+        # Handle OPTIONS (CORS preflight)
+        if method == "OPTIONS":
+            resp = f"HTTP/1.1 204 No Content\r\n{cors}\r\n"
+            writer.write(resp.encode())
+            await writer.drain()
+            writer.close()
+            return
+
+        result = {"ok": False, "error": "Unknown endpoint"}
+        status = 404
+
+        if path == "/auth/login" and method == "POST":
+            username = data.get("username", "").strip()
+            password = data.get("password", "")
+            users = _load_users_file()
+            if username in users:
+                stored_pw = users[username].get("password", "")
+                if _verify_password(password, stored_pw):
+                    token = _generate_token()
+                    role = users[username].get("role", "viewer")
+                    name = users[username].get("name", username)
+                    AUTH_TOKENS[token] = {
+                        "user": username, "role": role, "name": name,
+                        "created_at": datetime.now().isoformat()
+                    }
+                    result = {"ok": True, "token": token, "user": username, "role": role, "name": name}
+                    status = 200
+                    log.info(f"[AUTH] Login successful: {username}")
+                else:
+                    result = {"ok": False, "error": "Invalid credentials"}
+                    status = 401
+                    log.warning(f"[AUTH] Login failed (bad password): {username}")
+            else:
+                result = {"ok": False, "error": "Invalid credentials"}
+                status = 401
+                log.warning(f"[AUTH] Login failed (unknown user): {username}")
+
+        elif path == "/auth/verify" and method == "POST":
+            token = data.get("token", "")
+            if token and token in AUTH_TOKENS:
+                sess = AUTH_TOKENS[token]
+                result = {"ok": True, "user": sess["user"], "role": sess["role"]}
+                status = 200
+            else:
+                result = {"ok": False, "error": "Invalid token"}
+                status = 401
+
+        elif path == "/auth/logout" and method == "POST":
+            token = data.get("token", "")
+            if token in AUTH_TOKENS:
+                del AUTH_TOKENS[token]
+            result = {"ok": True}
+            status = 200
+
+        elif path == "/auth/change-password" and method == "POST":
+            token = data.get("token", "")
+            old_pw = data.get("old_password", "")
+            new_pw = data.get("new_password", "")
+            if token not in AUTH_TOKENS:
+                result = {"ok": False, "error": "Not authenticated"}
+                status = 401
+            else:
+                username = AUTH_TOKENS[token]["user"]
+                users = _load_users_file()
+                if username in users and _verify_password(old_pw, users[username].get("password", "")):
+                    users[username]["password"] = _hash_password(new_pw)
+                    _save_users_file(users)
+                    # Invalidate all tokens for this user
+                    AUTH_TOKENS.clear()
+                    result = {"ok": True}
+                    status = 200
+                    log.info(f"[AUTH] Password changed: {username}")
+                else:
+                    result = {"ok": False, "error": "Invalid old password"}
+                    status = 401
+
+        elif path == "/auth/users" and method == "GET":
+            users = _load_users_file()
+            # Strip password hashes before returning
+            safe = {}
+            for u, d in users.items():
+                safe[u] = {k: v for k, v in d.items() if k != "password"}
+            result = safe
+            status = 200
+
+        resp_body = json.dumps(result, ensure_ascii=False)
+        resp = (
+            f"HTTP/1.1 {status} OK\r\n"
+            f"Content-Type: application/json; charset=utf-8\r\n"
+            f"Content-Length: {len(resp_body.encode())}\r\n"
+            f"{cors}\r\n"
+            f"{resp_body}"
+        )
+        writer.write(resp.encode("utf-8"))
+        await writer.drain()
+    except Exception as e:
+        log.debug(f"[AUTH-HTTP] Error: {e}")
+    finally:
+        try:
+            writer.close()
+        except Exception:
+            pass
+
+async def start_auth_server(port: int = 8080):
+    """Start the HTTP auth server"""
+    try:
+        server = await asyncio.start_server(_http_auth_handler, "localhost", port)
+        log.info(f"[AUTH] HTTP auth server started on http://localhost:{port}")
+        async with server:
+            await server.serve_forever()
+    except OSError as e:
+        log.warning(f"[AUTH] Could not start auth server on port {port}: {e}")
+
+
 def dpi_inspect(src_ip: str, payload: bytes) -> list:
     if not payload:
         return []
@@ -4451,6 +4654,8 @@ async def main_async(interface: str):
         _wg_init_server()
         _wg_load_peers()
     log.info(f"[WS] Serveur WebSocket sur ws://localhost:{CFG.ws_port}")
+    # Start HTTP auth server as background task
+    asyncio.ensure_future(start_auth_server(8080))
     if HAS_WS:
         try:
             ver = tuple(int(x) for x in websockets.__version__.split(".")[:2])
@@ -4733,6 +4938,8 @@ def main_webview():
         asyncio.set_event_loop(loop)
         # Also start WebSocket server so map.html and other pages can connect
         async def _start_ws_and_run():
+            # Start HTTP auth server as background task
+            asyncio.ensure_future(start_auth_server(8080))
             if HAS_WS:
                 try:
                     ver = tuple(int(x) for x in websockets.__version__.split(".")[:2])

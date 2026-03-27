@@ -117,6 +117,8 @@ body{font-family:'Outfit',sans-serif;background:var(--bg);color:var(--text);min-
 
 <div class="nav-bar">
   <div class="nav-tab active" onclick="showSection('how',this)" data-t="tab_how">Comment ça marche</div>
+  <div class="nav-tab" onclick="showSection('training',this)" data-t="tab_training" style="color:var(--green)">Mini Formation</div>
+  <div class="nav-tab" onclick="showSection('agents',this)" data-t="tab_agents">Agents & Suite</div>
   <div class="nav-tab" onclick="showSection('attacks',this)" data-t="tab_attacks">Types d'attaques</div>
   <div class="nav-tab" onclick="showSection('tips',this)" data-t="tab_tips">Conseils sécurité</div>
   <div class="nav-tab" onclick="showSection('share',this)" data-t="tab_share">Partager</div>
@@ -155,6 +157,280 @@ body{font-family:'Outfit',sans-serif;background:var(--bg);color:var(--text);min-
       <div class="cmd-block">python netguard.py<button class="copy-btn" onclick="copyCmd(this)" data-t="share_copy">Copier</button></div>
       <div class="cmd-block">python netguard.py --no-block<button class="copy-btn" onclick="copyCmd(this)" data-t="share_copy">Copier</button></div>
       <div class="cmd-block">python netguard.py --interface Wi-Fi<button class="copy-btn" onclick="copyCmd(this)" data-t="share_copy">Copier</button></div>
+    </div>
+  </div>
+
+  <!-- ── MINI FORMATION DÉBUTANT ── -->
+  <div id="sec-training" class="section" style="display:none">
+    <div class="section-title">
+      <div class="section-icon" style="background:var(--greendim)">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 1v14M1 8h14M4 4l8 8M12 4l-8 8" stroke="#3dffb4" stroke-width="1.3" stroke-linecap="round"/></svg>
+      </div>
+      <span>Mini Formation — Cybersecurite pour Debutants</span>
+      <span class="tag tag-new">NOUVEAU</span>
+    </div>
+
+    <div style="background:var(--bg2);border:1px solid var(--green)33;border-radius:12px;padding:20px;margin-bottom:16px">
+      <div style="font-size:16px;font-weight:600;color:var(--green);margin-bottom:8px">Bienvenue dans votre formation express !</div>
+      <div style="font-size:13px;color:var(--text2);line-height:1.8">
+        Cette mini formation vous guide pas a pas pour comprendre et utiliser NetGuard Pro, meme si vous n'avez aucune experience en cybersecurite. Suivez les modules dans l'ordre.
+      </div>
+    </div>
+
+    <!-- Module 1 -->
+    <div class="card">
+      <div class="card-header" onclick="toggleCard(this)">
+        <div class="card-title"><span style="color:var(--green);margin-right:8px">Module 1</span> C'est quoi la cybersecurite ?</div>
+        <div class="card-arrow">▶</div>
+      </div>
+      <div class="card-body">
+        <div style="line-height:2;font-size:13px">
+          <strong style="color:var(--blue)">La cybersecurite</strong> c'est proteger vos ordinateurs, vos donnees et votre reseau contre les pirates informatiques.<br><br>
+          <strong>Pourquoi c'est important ?</strong><br>
+          • 60% des PME ferment dans les 6 mois apres une cyberattaque<br>
+          • Les pirates scannent internet 24h/24 a la recherche de cibles faciles<br>
+          • Vos donnees personnelles (mots de passe, cartes bancaires) valent de l'argent<br><br>
+          <strong style="color:var(--green)">Bonne nouvelle :</strong> NetGuard Pro fait tout ca automatiquement pour vous !
+        </div>
+      </div>
+    </div>
+
+    <!-- Module 2 -->
+    <div class="card">
+      <div class="card-header" onclick="toggleCard(this)">
+        <div class="card-title"><span style="color:var(--green);margin-right:8px">Module 2</span> Premier lancement — Que faire ?</div>
+        <div class="card-arrow">▶</div>
+      </div>
+      <div class="card-body">
+        <div style="line-height:2;font-size:13px">
+          <strong style="color:var(--blue)">Etape 1 :</strong> Lancez NetGuard Pro (double-clic sur l'icone du bureau)<br>
+          <strong style="color:var(--blue)">Etape 2 :</strong> Le dashboard s'ouvre automatiquement — vous voyez le trafic reseau en direct<br>
+          <strong style="color:var(--blue)">Etape 3 :</strong> Le point vert en haut a droite = tout fonctionne !<br>
+          <strong style="color:var(--blue)">Etape 4 :</strong> Laissez tourner — NetGuard Pro surveille en arriere-plan<br><br>
+          <div style="background:var(--bg4);border:1px solid var(--border2);border-radius:8px;padding:12px;margin-top:8px">
+            <strong style="color:var(--amber)">Astuce :</strong> Cliquez sur "Lancer Suite NetGuard" sur votre bureau pour demarrer TOUS les agents de securite d'un seul coup.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Module 3 -->
+    <div class="card">
+      <div class="card-header" onclick="toggleCard(this)">
+        <div class="card-title"><span style="color:var(--green);margin-right:8px">Module 3</span> Comprendre le Dashboard</div>
+        <div class="card-arrow">▶</div>
+      </div>
+      <div class="card-body">
+        <div style="line-height:2;font-size:13px">
+          <strong style="color:var(--blue)">En haut :</strong> Les metriques principales (paquets analyses, menaces detectees, IPs bloquees)<br>
+          <strong style="color:var(--blue)">A gauche :</strong> Le menu de navigation — chaque section a un role precis<br>
+          <strong style="color:var(--blue)">Au centre :</strong> Le contenu principal — graphiques, tableaux, alertes<br><br>
+          <strong>Les couleurs importantes :</strong><br>
+          <span style="color:var(--green)">● Vert</span> = Tout va bien, trafic normal<br>
+          <span style="color:var(--amber)">● Orange</span> = Alerte, activite suspecte a surveiller<br>
+          <span style="color:var(--red)">● Rouge</span> = Menace detectee et bloquee automatiquement<br>
+          <span style="color:var(--blue)">● Bleu</span> = Information, action de l'utilisateur
+        </div>
+      </div>
+    </div>
+
+    <!-- Module 4 -->
+    <div class="card">
+      <div class="card-header" onclick="toggleCard(this)">
+        <div class="card-title"><span style="color:var(--green);margin-right:8px">Module 4</span> Les 15 Applications de la Suite</div>
+        <div class="card-arrow">▶</div>
+      </div>
+      <div class="card-body">
+        <div style="line-height:2;font-size:13px">
+          <table style="width:100%;font-size:12px;border-collapse:collapse">
+            <tr style="border-bottom:1px solid var(--border)"><td style="padding:6px;color:var(--blue);font-weight:600">NetGuard Pro</td><td style="padding:6px;color:var(--text2)">Pare-feu & IDS — surveille tout le trafic reseau</td></tr>
+            <tr style="border-bottom:1px solid var(--border)"><td style="padding:6px;color:var(--blue);font-weight:600">Sentinel OS</td><td style="padding:6px;color:var(--text2)">Orchestrateur — controle tous les agents</td></tr>
+            <tr style="border-bottom:1px solid var(--border)"><td style="padding:6px;color:var(--blue);font-weight:600">VPN Guard</td><td style="padding:6px;color:var(--text2)">VPN WireGuard avec Kill Switch</td></tr>
+            <tr style="border-bottom:1px solid var(--border)"><td style="padding:6px;color:var(--blue);font-weight:600">CleanGuard</td><td style="padding:6px;color:var(--text2)">Antimalware + nettoyeur systeme</td></tr>
+            <tr style="border-bottom:1px solid var(--border)"><td style="padding:6px;color:var(--blue);font-weight:600">MailShield</td><td style="padding:6px;color:var(--text2)">Securite email anti-phishing</td></tr>
+            <tr style="border-bottom:1px solid var(--border)"><td style="padding:6px;color:var(--red);font-weight:600">StrikeBack</td><td style="padding:6px;color:var(--text2)">Red Team — reponse active contre les attaquants</td></tr>
+            <tr style="border-bottom:1px solid var(--border)"><td style="padding:6px;color:var(--amber);font-weight:600">HoneyPot</td><td style="padding:6px;color:var(--text2)">Pieges a hackers — detecte les intrusions</td></tr>
+            <tr style="border-bottom:1px solid var(--border)"><td style="padding:6px;color:var(--purple);font-weight:600">FIM</td><td style="padding:6px;color:var(--text2)">Surveille les modifications de fichiers</td></tr>
+            <tr><td style="padding:6px;color:var(--cyan);font-weight:600">Recorder</td><td style="padding:6px;color:var(--text2)">Enregistre les sessions pour analyse</td></tr>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Module 5 -->
+    <div class="card">
+      <div class="card-header" onclick="toggleCard(this)">
+        <div class="card-title"><span style="color:var(--green);margin-right:8px">Module 5</span> Que faire si une menace est detectee ?</div>
+        <div class="card-arrow">▶</div>
+      </div>
+      <div class="card-body">
+        <div style="line-height:2;font-size:13px">
+          <strong style="color:var(--green)">Pas de panique !</strong> NetGuard Pro bloque automatiquement les menaces. Voici quoi faire :<br><br>
+          <strong>1.</strong> Allez dans l'onglet <span style="color:var(--blue)">Menaces</span> pour voir les details<br>
+          <strong>2.</strong> Les IPs dangereuses sont deja bloquees (onglet <span style="color:var(--blue)">IPs bloquees</span>)<br>
+          <strong>3.</strong> Si vous recevez beaucoup d'alertes du meme pays, activez le <span style="color:var(--blue)">Geoblocage</span><br>
+          <strong>4.</strong> Pour etre notifie, configurez <span style="color:var(--blue)">Discord</span> ou <span style="color:var(--blue)">Telegram</span> dans les parametres<br><br>
+          <div style="background:var(--reddim);border:1px solid #ff4d6a33;border-radius:8px;padding:12px;margin-top:8px">
+            <strong style="color:var(--red)">Urgence :</strong> Si vous pensez etre pirate, deconnectez votre cable reseau/Wi-Fi et contactez contact@netguardpro.com
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Module 6 -->
+    <div class="card">
+      <div class="card-header" onclick="toggleCard(this)">
+        <div class="card-title"><span style="color:var(--green);margin-right:8px">Module 6</span> Les Notifications Internes</div>
+        <div class="card-arrow">▶</div>
+      </div>
+      <div class="card-body">
+        <div style="line-height:2;font-size:13px">
+          Chaque agent de la suite NetGuard Pro vous envoie des <strong style="color:var(--blue)">notifications en temps reel</strong> :<br><br>
+          • <span style="color:var(--red)">Alerte Rouge</span> : Menace critique bloquee (scan de ports, brute force, malware)<br>
+          • <span style="color:var(--amber)">Alerte Orange</span> : Activite suspecte a surveiller (trafic inhabituel, DNS suspect)<br>
+          • <span style="color:var(--green)">Notification Verte</span> : Action reussie (IP bloquee, scan termine, VPN connecte)<br>
+          • <span style="color:var(--blue)">Info Bleue</span> : Mise a jour de statut (agent demarre, baseline mise a jour)<br><br>
+          <strong>Ou voir les notifications ?</strong><br>
+          → Dans le <span style="color:var(--blue)">Dashboard</span> : flux en direct<br>
+          → Dans <span style="color:var(--blue)">Sentinel OS</span> : vue centralisee de tous les agents<br>
+          → Sur <span style="color:var(--blue)">Discord/Telegram</span> : si configure dans les parametres
+        </div>
+      </div>
+    </div>
+
+    <div style="background:linear-gradient(135deg,var(--bluedim),var(--purpledim));border:1px solid var(--blue)33;border-radius:12px;padding:20px;margin-top:16px;text-align:center">
+      <div style="font-size:16px;font-weight:600;color:var(--text);margin-bottom:6px">Formation terminee !</div>
+      <div style="font-size:13px;color:var(--text2);margin-bottom:12px">Vous etes maintenant pret a utiliser NetGuard Pro comme un pro.</div>
+      <a href="netguard_dashboard.html" style="background:linear-gradient(135deg,var(--blue),#3a7bdd);color:#fff;padding:10px 24px;border-radius:8px;font-size:13px;text-decoration:none;display:inline-block">Retour au Dashboard →</a>
+    </div>
+  </div>
+
+  <!-- ── AGENTS & SUITE ── -->
+  <div id="sec-agents" class="section" style="display:none">
+    <div class="section-title">
+      <div class="section-icon" style="background:var(--purpledim)">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="1" y="1" width="6" height="6" rx="1" stroke="#b47dff" stroke-width="1.2"/><rect x="9" y="1" width="6" height="6" rx="1" stroke="#b47dff" stroke-width="1.2"/><rect x="1" y="9" width="6" height="6" rx="1" stroke="#b47dff" stroke-width="1.2"/><rect x="9" y="9" width="6" height="6" rx="1" stroke="#b47dff" stroke-width="1.2"/></svg>
+      </div>
+      <span>Agents & Architecture de la Suite</span>
+    </div>
+
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:16px">
+      <div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:10px">Mode Agent — Comment ca fonctionne</div>
+      <div style="font-size:13px;color:var(--text2);line-height:1.8">
+        NetGuard Pro fonctionne en <strong style="color:var(--blue)">mode agent autonome</strong>. Chaque programme de la suite tourne independamment et communique via <strong style="color:var(--blue)">WebSocket</strong> avec le centre de commande <strong style="color:var(--purple)">Sentinel OS</strong>.<br><br>
+        Les agents s'echangent des informations via un <strong style="color:var(--green)">bus de messages pub/sub</strong> (publish/subscribe). Quand un agent detecte une menace, tous les autres sont alertes instantanement.
+      </div>
+    </div>
+
+    <!-- Agent cards -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px">
+
+      <div class="card">
+        <div class="card-header" style="border-left:3px solid var(--purple)">
+          <div class="card-title">Sentinel OS — Orchestrateur</div>
+          <span style="font-size:10px;color:var(--purple);background:var(--purpledim);padding:2px 8px;border-radius:4px">Port 8900</span>
+        </div>
+        <div class="card-body open" style="font-size:12px;color:var(--text2);line-height:1.8">
+          Centre de commande qui connecte et controle tous les agents. Correlation de menaces multi-sources, moteur de playbooks automatises, alertes Discord/Telegram, chat IA contextuel.
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header" style="border-left:3px solid var(--blue)">
+          <div class="card-title">NetGuard Pro — IDS/Firewall</div>
+          <span style="font-size:10px;color:var(--blue);background:var(--bluedim);padding:2px 8px;border-radius:4px">Port 8765</span>
+        </div>
+        <div class="card-body open" style="font-size:12px;color:var(--text2);line-height:1.8">
+          Moteur principal de surveillance reseau. Capture et analyse chaque paquet, detecte les attaques (scan de ports, brute force, SYN flood, DPI), bloque les IP malveillantes via le pare-feu OS.
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header" style="border-left:3px solid var(--cyan)">
+          <div class="card-title">VPN Guard — WireGuard VPN</div>
+          <span style="font-size:10px;color:var(--cyan);background:#00d4ff22;padding:2px 8px;border-radius:4px">Port 8820</span>
+        </div>
+        <div class="card-body open" style="font-size:12px;color:var(--text2);line-height:1.8">
+          VPN WireGuard avec Kill Switch, protection DNS, split tunneling, reconnexion Wi-Fi automatique, multi-profils. Chiffre tout votre trafic internet.
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header" style="border-left:3px solid var(--amber)">
+          <div class="card-title">CleanGuard — Antimalware</div>
+          <span style="font-size:10px;color:var(--amber);background:var(--amberdim);padding:2px 8px;border-radius:4px">Port 8810</span>
+        </div>
+        <div class="card-body open" style="font-size:12px;color:var(--text2);line-height:1.8">
+          Scanner antimalware + nettoyeur systeme. Signatures YARA, hashes SHA256, detection EICAR, scan de processus, nettoyage navigateurs, registre Windows, quarantaine.
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header" style="border-left:3px solid var(--green)">
+          <div class="card-title">MailShield — Securite Email</div>
+          <span style="font-size:10px;color:var(--green);background:var(--greendim);padding:2px 8px;border-radius:4px">Port 8801</span>
+        </div>
+        <div class="card-body open" style="font-size:12px;color:var(--text2);line-height:1.8">
+          Client email securise avec detection phishing multi-criteres, filtrage spam, analyse de pieces jointes, support OAuth2 Microsoft, blacklist/whitelist.
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header" style="border-left:3px solid var(--red)">
+          <div class="card-title">StrikeBack — Red Team</div>
+          <span style="font-size:10px;color:var(--red);background:var(--reddim);padding:2px 8px;border-radius:4px">Port 8850</span>
+        </div>
+        <div class="card-body open" style="font-size:12px;color:var(--text2);line-height:1.8">
+          Reponse active contre les attaquants. Tarpit TCP (ralentit les pirates), deploiement de decoys, tracking d'IP, scoring de danger, isolation automatique.
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header" style="border-left:3px solid var(--amber)">
+          <div class="card-title">HoneyPot — Pieges</div>
+          <span style="font-size:10px;color:var(--amber);background:var(--amberdim);padding:2px 8px;border-radius:4px">Port 8830</span>
+        </div>
+        <div class="card-body open" style="font-size:12px;color:var(--text2);line-height:1.8">
+          Deploie des fichiers pieges (faux mots de passe, fausses cles SSH) et des faux services (SSH, HTTP, FTP). Detecte toute tentative d'intrusion.
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header" style="border-left:3px solid #b47dff">
+          <div class="card-title">FIM — Integrite Fichiers</div>
+          <span style="font-size:10px;color:#b47dff;background:var(--purpledim);padding:2px 8px;border-radius:4px">Port 8840</span>
+        </div>
+        <div class="card-body open" style="font-size:12px;color:var(--text2);line-height:1.8">
+          Surveille les fichiers systeme critiques. Cree une baseline de hashes et detecte toute modification, suppression ou ajout suspect.
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header" style="border-left:3px solid var(--cyan)">
+          <div class="card-title">Recorder — Enregistreur</div>
+          <span style="font-size:10px;color:var(--cyan);background:#00d4ff22;padding:2px 8px;border-radius:4px">Port 8860</span>
+        </div>
+        <div class="card-body open" style="font-size:12px;color:var(--text2);line-height:1.8">
+          Enregistre les sessions reseau, surveille les processus, les changements de fichiers et le trafic. Genere des rapports d'incidents detailles.
+        </div>
+      </div>
+    </div>
+
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px;margin-top:16px">
+      <div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:10px">Bus de Messages — Communication Inter-Agents</div>
+      <div style="font-size:12px;color:var(--text2);line-height:1.8;margin-bottom:12px">
+        Les agents communiquent via des canaux thematiques :
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:6px;font-size:11px;font-family:'Geist Mono',monospace">
+        <div style="background:var(--bg4);padding:6px 10px;border-radius:4px;color:var(--red)">threat.* — Menaces</div>
+        <div style="background:var(--bg4);padding:6px 10px;border-radius:4px;color:var(--blue)">network.* — Reseau</div>
+        <div style="background:var(--bg4);padding:6px 10px;border-radius:4px;color:var(--green)">system.* — Systeme</div>
+        <div style="background:var(--bg4);padding:6px 10px;border-radius:4px;color:var(--cyan)">vpn.* — VPN</div>
+        <div style="background:var(--bg4);padding:6px 10px;border-radius:4px;color:var(--amber)">email.* — Email</div>
+        <div style="background:var(--bg4);padding:6px 10px;border-radius:4px;color:var(--purple)">agent.* — Lifecycle</div>
+        <div style="background:var(--bg4);padding:6px 10px;border-radius:4px;color:#ff4d6a">action.* — Commandes</div>
+        <div style="background:var(--bg4);padding:6px 10px;border-radius:4px;color:var(--text3)">cortex.* — Decisions</div>
+      </div>
     </div>
   </div>
 

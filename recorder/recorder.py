@@ -1024,6 +1024,119 @@ class RecordEngine:
 
 
 # ===========================================================================
+# INLINE DASHBOARD (fallback when no HTML file exists)
+# ===========================================================================
+
+def _generate_inline_dashboard(ws_port: int) -> str:
+    """Generate a temporary HTML dashboard file that connects via WebSocket."""
+    html = f"""<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>RecordAgent v{VERSION}</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600&family=Geist+Mono:wght@400;500&display=swap');
+*{{box-sizing:border-box;margin:0;padding:0}}
+:root{{--bg:#0f0f13;--bg2:#16161d;--bg3:#1c1c26;--bg4:#22222f;--border:#ffffff0f;--border2:#ffffff1a;--text:#e8e8f0;--text2:#9090a8;--text3:#5a5a72;--blue:#4d9fff;--red:#ff4d6a;--green:#3dffb4;--amber:#ffb347;--purple:#b47dff;--cyan:#00d4ff}}
+body{{font-family:'Outfit',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;display:flex;flex-direction:column}}
+.titlebar{{background:var(--bg2);border-bottom:1px solid var(--border);padding:10px 16px;display:flex;align-items:center;justify-content:space-between}}
+.titlebar h1{{font-size:14px;font-weight:600}}
+.titlebar h1 span{{color:var(--cyan)}}
+.dot{{width:8px;height:8px;border-radius:50%;background:var(--red)}}
+.dot.on{{background:var(--green);box-shadow:0 0 6px var(--green)}}
+.main{{padding:16px;flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:12px}}
+.metrics{{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}}
+.metric{{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:14px;text-align:center}}
+.metric .val{{font-size:22px;font-weight:700;font-family:'Geist Mono',monospace}}
+.metric .lbl{{font-size:10px;color:var(--text3);margin-top:4px;text-transform:uppercase;letter-spacing:.05em}}
+.card{{background:var(--bg2);border:1px solid var(--border);border-radius:8px;overflow:hidden}}
+.card-h{{padding:10px 14px;border-bottom:1px solid var(--border);font-size:12px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.04em}}
+.card-b{{padding:12px 14px;max-height:300px;overflow-y:auto}}
+.event{{padding:6px 0;border-bottom:1px solid var(--border);font-size:11px;font-family:'Geist Mono',monospace;display:flex;gap:8px;align-items:center}}
+.event:last-child{{border-bottom:none}}
+.event .icon{{font-size:14px;flex-shrink:0}}
+.event .time{{color:var(--text3);min-width:70px}}
+.event .msg{{color:var(--text2);flex:1}}
+.c-blue{{color:var(--blue)}}.c-red{{color:var(--red)}}.c-green{{color:var(--green)}}.c-amber{{color:var(--amber)}}
+.btn{{background:var(--bg4);border:1px solid var(--border2);color:var(--text2);font-size:11px;padding:6px 14px;border-radius:6px;cursor:pointer;font-family:'Outfit',sans-serif;transition:.15s}}
+.btn:hover{{border-color:var(--blue);color:var(--blue)}}
+.btn-rec{{background:var(--reddim);border-color:#ff4d6a44;color:var(--red)}}
+.controls{{display:flex;gap:8px;align-items:center}}
+</style>
+</head>
+<body>
+<div class="titlebar">
+  <div style="display:flex;align-items:center;gap:10px">
+    <h1><span>Record</span>Agent v{VERSION}</h1>
+    <div class="dot" id="dot"></div>
+    <span style="font-size:11px;color:var(--text3)" id="status">Connexion...</span>
+  </div>
+  <div class="controls">
+    <button class="btn" onclick="send('start_incident')">Incident</button>
+    <button class="btn" onclick="send('generate_report')">Rapport</button>
+  </div>
+</div>
+<div class="main">
+  <div class="metrics">
+    <div class="metric"><div class="val c-blue" id="m-events">0</div><div class="lbl">Evenements</div></div>
+    <div class="metric"><div class="val c-green" id="m-sessions">0</div><div class="lbl">Sessions</div></div>
+    <div class="metric"><div class="val c-amber" id="m-processes">0</div><div class="lbl">Processus</div></div>
+    <div class="metric"><div class="val c-purple" id="m-storage">0</div><div class="lbl">Stockage (MB)</div></div>
+  </div>
+  <div class="card"><div class="card-h">Evenements Recents</div><div class="card-b" id="events"><div style="text-align:center;padding:20px;color:var(--text3)">En attente de donnees...</div></div></div>
+  <div class="card"><div class="card-h">Moniteurs</div><div class="card-b" id="monitors"></div></div>
+</div>
+<script>
+let ws;
+function connect() {{
+  ws = new WebSocket('ws://localhost:{ws_port}');
+  ws.onopen = () => {{
+    document.getElementById('dot').className = 'dot on';
+    document.getElementById('status').textContent = 'Connecte';
+    ws.send(JSON.stringify({{cmd:'get_state'}}));
+  }};
+  ws.onclose = () => {{
+    document.getElementById('dot').className = 'dot';
+    document.getElementById('status').textContent = 'Deconnecte';
+    setTimeout(connect, 3000);
+  }};
+  ws.onmessage = (e) => {{
+    try {{ const d = JSON.parse(e.data); update(d); }} catch(ex) {{}}
+  }};
+}}
+function send(cmd) {{ if (ws && ws.readyState === 1) ws.send(JSON.stringify({{cmd}})); }}
+function update(d) {{
+  if (d.type !== 'state') return;
+  const r = d.recording || {{}};
+  const s = d.stats || {{}};
+  document.getElementById('m-events').textContent = s.total_events || 0;
+  document.getElementById('m-sessions').textContent = (d.monitors?.sessions?.active_sessions) || 0;
+  document.getElementById('m-processes').textContent = (d.monitors?.processes?.process_count) || 0;
+  document.getElementById('m-storage').textContent = r.storage_used_mb || 0;
+  const events = d.recent_events || d.timeline || [];
+  const el = document.getElementById('events');
+  if (events.length) {{
+    el.innerHTML = events.slice(0, 50).map(ev => `<div class="event"><span class="icon">${{ev.icon||''}}</span><span class="time">${{new Date((ev.ts||0)*1000).toLocaleTimeString()}}</span><span class="msg">${{ev.text||ev.description||''}}</span></div>`).join('');
+  }}
+  const mon = d.monitors || {{}};
+  document.getElementById('monitors').innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;font-size:12px">
+      <div><strong style="color:var(--blue)">Sessions</strong><br><span style="color:var(--text2)">${{JSON.stringify(mon.sessions||{{}}).slice(0,80)}}</span></div>
+      <div><strong style="color:var(--amber)">Processus</strong><br><span style="color:var(--text2)">${{mon.processes?.process_count||0}} surveilles</span></div>
+      <div><strong style="color:var(--purple)">Fichiers</strong><br><span style="color:var(--text2)">${{mon.files?.changes_detected||0}} changements</span></div>
+    </div>`;
+}}
+connect();
+</script>
+</body></html>"""
+    # Write to temp file
+    tmp = Path(__file__).parent / "logs" / "_recorder_dashboard.html"
+    tmp.parent.mkdir(exist_ok=True)
+    tmp.write_text(html, encoding="utf-8")
+    return str(tmp.resolve())
+
+
+# ===========================================================================
 # WEBSOCKET SERVER
 # ===========================================================================
 
@@ -1187,9 +1300,21 @@ def main():
         t.start()
 
         try:
+            # Use local dashboard HTML file, or fallback to inline HTML
+            dash_path = Path(__file__).parent / "recorder_dashboard.html"
+            if not dash_path.exists():
+                # Also check parent directory
+                dash_path = Path(__file__).parent.parent / "netguard_dashboard.html"
+
+            if dash_path.exists():
+                url = str(dash_path.resolve())
+            else:
+                # Generate inline HTML that connects via WebSocket
+                url = _generate_inline_dashboard(port)
+
             webview.create_window(
                 f"RecordAgent v{VERSION}",
-                f"http://localhost:{port}",
+                url,
                 width=1100,
                 height=750,
             )

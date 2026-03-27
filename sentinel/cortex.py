@@ -609,8 +609,19 @@ class ThreatCorrelator:
                     factors.append("Protection DNS inactive")
 
             elif key == "mailshield":
-                # MailShield has simpler state
-                pass
+                threats = state.get("threats_detected", 0)
+                phishing = state.get("phishing_blocked", 0)
+                spam = state.get("spam_blocked", 0)
+                quarantined = state.get("quarantined", 0)
+                if phishing > 0:
+                    score += 20
+                    factors.append(f"{phishing} tentative(s) de phishing bloquee(s)")
+                if threats > 0:
+                    score += 15
+                    factors.append(f"{threats} menace(s) email detectee(s)")
+                if quarantined > 0:
+                    score += 5
+                    factors.append(f"{quarantined} email(s) en quarantaine")
 
             elif key == "honeypot":
                 traps_triggered = state.get("traps_triggered", 0)
@@ -1284,7 +1295,7 @@ class CortexAPI:
         try:
             cpu = psutil.cpu_percent(interval=0)
             mem = psutil.virtual_memory()
-            disk = psutil.disk_usage("/")
+            disk = psutil.disk_usage("C:\\" if IS_WINDOWS else "/")
         except Exception:
             cpu, mem, disk = 0, None, None
 
@@ -1793,25 +1804,42 @@ def main():
     correlator = ThreatCorrelator(bus)
     chat_engine = ChatEngine(connectors)
 
-    # Phase 3 components
-    playbook_engine = PlaybookEngine(bus, connectors)
-    threat_intel = ThreatIntelFeed(bus)
-    alert_settings = {
-        "telegram_bot_token": SETTINGS.get("telegram_bot_token", ""),
-        "telegram_chat_id": SETTINGS.get("telegram_chat_id", ""),
-        "discord_webhook_url": SETTINGS.get("discord_webhook_url", ""),
-        "language": SETTINGS.get("language", "fr"),
-    }
-    alert_mgr = AlertManager(bus, alert_settings)
+    # Phase 3 components (with graceful fallback if modules fail)
+    playbook_engine = None
+    threat_intel = None
+    alert_mgr = None
+
+    try:
+        playbook_engine = PlaybookEngine(bus, connectors)
+    except Exception as e:
+        logger.warning(f"[Cortex] PlaybookEngine init failed (non-critical): {e}")
+
+    try:
+        threat_intel = ThreatIntelFeed(bus)
+    except Exception as e:
+        logger.warning(f"[Cortex] ThreatIntelFeed init failed (non-critical): {e}")
+
+    try:
+        alert_settings = {
+            "telegram_bot_token": SETTINGS.get("telegram_bot_token", ""),
+            "telegram_chat_id": SETTINGS.get("telegram_chat_id", ""),
+            "discord_webhook_url": SETTINGS.get("discord_webhook_url", ""),
+            "language": SETTINGS.get("language", "fr"),
+        }
+        alert_mgr = AlertManager(bus, alert_settings)
+    except Exception as e:
+        logger.warning(f"[Cortex] AlertManager init failed (non-critical): {e}")
 
     _api = CortexAPI(manager, connectors, correlator, bus, chat_engine,
                      playbook_engine, threat_intel, alert_mgr)
 
     # Give playbook engine access to API for executing cross-agent commands
-    playbook_engine.set_api(_api)
+    if playbook_engine:
+        playbook_engine.set_api(_api)
 
     # Start threat intelligence auto-update
-    threat_intel.start_auto_update()
+    if threat_intel:
+        threat_intel.start_auto_update()
     logger.info("[Cortex] Phase 3 components initialized (Playbooks, ThreatIntel, Alerts)")
 
     # Agents are NOT auto-started — user launches them from the dashboard

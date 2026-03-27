@@ -125,30 +125,97 @@ if (window.paypal) {
       });
     },
     onApprove: function(data, actions) {
-      // Subscription approved
+      // Subscription approved — generate license key
       const key = 'NGPRO-' + data.subscriptionID.slice(0, 4).toUpperCase()
         + '-' + Math.random().toString(36).substr(2, 4).toUpperCase()
         + '-' + Math.random().toString(36).substr(2, 4).toUpperCase()
         + '-' + Date.now().toString(36).toUpperCase().slice(-4);
 
+      // Download URL (GitHub release)
+      const downloadUrl = 'https://github.com/sxc3030-eng/netguard-pro/releases/latest/download/NetGuardPro_Setup_3.0.0.exe';
+
       document.querySelector('.card').innerHTML = `
         <div style="text-align:center;padding:40px 0">
           <div style="font-size:48px;margin-bottom:16px">✓</div>
-          <h2 style="font-size:24px;margin-bottom:8px">Merci pour votre achat !</h2>
+          <h2 style="font-size:24px;margin-bottom:8px;color:var(--green)">Merci pour votre achat !</h2>
           <p style="color:var(--text2);margin-bottom:24px">Votre licence NetGuard Pro ${plan === 'enterprise' ? 'Enterprise' : 'Pro'} est activée.</p>
-          <div style="background:var(--bg3);border:1px solid var(--border2);border-radius:10px;padding:16px;margin-bottom:24px">
+
+          <div style="background:var(--bg3);border:1px solid var(--border2);border-radius:10px;padding:16px;margin-bottom:16px">
             <div style="font-size:12px;color:var(--text3);margin-bottom:6px">VOTRE CLÉ DE LICENCE</div>
-            <div style="font-size:18px;font-family:monospace;color:var(--blue);letter-spacing:.05em">${key}</div>
+            <div style="font-size:18px;font-family:monospace;color:var(--blue);letter-spacing:.05em;user-select:all;cursor:text" id="license-key">${key}</div>
+            <button onclick="navigator.clipboard.writeText('${key}');this.textContent='Copié !';this.style.color='var(--green)'" style="margin-top:10px;background:var(--bg4);border:1px solid var(--border2);color:var(--blue);padding:6px 16px;border-radius:6px;cursor:pointer;font-family:Outfit,sans-serif;font-size:12px;transition:.15s">
+              Copier la clé
+            </button>
           </div>
-          <p style="font-size:13px;color:var(--text2);margin-bottom:20px">
-            Copiez cette clé et entrez-la dans <code style="color:var(--blue)">netguard_settings.json</code><br>
-            ou via le dashboard → Paramètres → Licence.
+
+          <div id="download-progress" style="background:var(--bg3);border:1px solid var(--green)44;border-radius:10px;padding:16px;margin-bottom:16px">
+            <div style="font-size:14px;font-weight:600;color:var(--green);margin-bottom:8px">
+              ⬇ Téléchargement en cours...
+            </div>
+            <div style="background:var(--bg4);border-radius:4px;height:6px;overflow:hidden;margin-bottom:8px">
+              <div id="dl-bar" style="height:100%;background:linear-gradient(90deg,var(--blue),var(--green));border-radius:4px;width:0%;transition:width 0.3s"></div>
+            </div>
+            <div style="font-size:11px;color:var(--text3)" id="dl-status">Préparation du téléchargement...</div>
+          </div>
+
+          <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-bottom:16px">
+            <a href="${downloadUrl}" id="dl-btn" style="background:linear-gradient(135deg,var(--green),#2acd8a);color:#0a0a0f;padding:12px 24px;border-radius:8px;font-size:14px;font-weight:600;display:inline-flex;align-items:center;gap:8px;text-decoration:none;transition:.15s">
+              ⬇ Télécharger l'installateur (.exe)
+            </a>
+            <a href="https://github.com/sxc3030-eng/netguard-pro/releases" style="background:var(--bg4);border:1px solid var(--border2);color:var(--text2);padding:12px 24px;border-radius:8px;font-size:13px;display:inline-flex;align-items:center;gap:8px;text-decoration:none">
+              Voir sur GitHub
+            </a>
+          </div>
+
+          <div style="background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:16px;text-align:left;margin-bottom:16px">
+            <div style="font-size:13px;font-weight:600;margin-bottom:10px">Installation rapide :</div>
+            <div style="font-size:12px;color:var(--text2);line-height:2">
+              <div>1. Lancez <code style="color:var(--green)">NetGuardPro_Setup_3.0.0.exe</code></div>
+              <div>2. Entrez votre clé de licence quand demandé</div>
+              <div>3. Cliquez Suivant → Installer → Terminé</div>
+              <div>4. NetGuard Pro démarre automatiquement !</div>
+            </div>
+          </div>
+
+          <p style="font-size:12px;color:var(--text3)">
+            Problème ? Contactez <a href="mailto:contact@netguardpro.com" style="color:var(--blue)">contact@netguardpro.com</a>
           </p>
-          <a href="https://github.com/sxc3030-eng/netguard-pro" style="background:var(--blue);color:#fff;padding:12px 24px;border-radius:8px;font-size:14px;display:inline-block">
-            Télécharger NetGuard Pro →
-          </a>
         </div>
       `;
+
+      // Auto-start download
+      setTimeout(function() {
+        const bar = document.getElementById('dl-bar');
+        const status = document.getElementById('dl-status');
+        const progress = document.getElementById('download-progress');
+
+        // Animate progress bar
+        let pct = 0;
+        const interval = setInterval(function() {
+          pct += Math.random() * 15 + 5;
+          if (pct > 95) pct = 95;
+          bar.style.width = pct + '%';
+          status.textContent = 'Téléchargement... ' + Math.round(pct) + '%';
+        }, 300);
+
+        // Trigger actual download
+        const link = document.createElement('a');
+        link.href = downloadUrl;
+        link.download = 'NetGuardPro_Setup_3.0.0.exe';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+
+        // Complete progress bar after a delay
+        setTimeout(function() {
+          clearInterval(interval);
+          bar.style.width = '100%';
+          status.textContent = 'Téléchargement terminé !';
+          progress.style.borderColor = 'var(--green)';
+          progress.querySelector('div').innerHTML = '✓ Téléchargement terminé — Ouvrez le fichier pour installer';
+          progress.querySelector('div').style.color = 'var(--green)';
+        }, 3000);
+      }, 500);
     },
     onError: function(err) {
       console.error('PayPal error:', err);
