@@ -97,6 +97,21 @@ section{padding:80px 40px;max-width:1100px;margin:0 auto}
 footer{border-top:1px solid var(--border);padding:40px;display:flex;justify-content:space-between;align-items:center;color:var(--text3);font-size:13px;max-width:1100px;margin:0 auto}
 
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+
+/* App showcase */
+.app-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:20px;margin-top:48px}
+.app-card{background:var(--bg2);border:1px solid var(--border);border-radius:14px;overflow:hidden;transition:.25s}
+.app-card:hover{border-color:var(--border2);transform:translateY(-4px);box-shadow:0 12px 40px rgba(0,0,0,.4)}
+.app-screenshot{width:100%;aspect-ratio:8/5;object-fit:cover;border-bottom:1px solid var(--border)}
+.app-info{padding:18px}
+.app-name{font-size:16px;font-weight:700;margin-bottom:4px}
+.app-desc{font-size:13px;color:var(--text2);line-height:1.5;margin-bottom:10px}
+.app-tags{display:flex;gap:6px;flex-wrap:wrap}
+.app-badge{font-size:10px;padding:3px 8px;border-radius:4px;font-weight:500}
+.badge-free{background:#16a34a22;color:#3dffb4}
+.badge-pro{background:#4d9fff22;color:#4d9fff}
+.badge-ent{background:#b47dff22;color:#b47dff}
+.badge-port{background:var(--bg4);color:var(--text3)}
 </style>
 </head>
 <body>
@@ -105,8 +120,9 @@ footer{border-top:1px solid var(--border);padding:40px;display:flex;justify-cont
   <div class="nav-logo"><span>Net</span>Guard Pro</div>
   <div class="nav-links">
     <a href="#features">Fonctionnalités</a>
-    <a href="#suite">Suite</a>
+    <a href="#apps">15 Apps</a>
     <a href="#pricing">Tarifs</a>
+    <a href="netguard_plans.html">Comparatif</a>
     <a href="https://github.com/sxc3030-eng/netguard-pro" target="_blank">GitHub</a>
     <a href="netguard_login.html" class="nav-cta">Se connecter →</a>
   </div>
@@ -271,6 +287,152 @@ footer{border-top:1px solid var(--border);padding:40px;display:flex;justify-cont
       <div class="feature-desc">Réponse active aux attaques : blocage automatique, contre-mesures, bannissement d'IP, notifications.</div>
       <div class="feature-tags"><span class="tag">Auto-réponse</span><span class="tag">Firewall</span></div>
     </div>
+  </div>
+</section>
+
+<!-- All 15 Apps -->
+<section id="apps">
+  <div class="section-label">15 Applications</div>
+  <div class="section-title">La suite complete</div>
+  <div class="section-sub">Chaque module possede son propre dashboard. Essayez tout gratuitement pendant 30 jours.</div>
+
+  <div class="app-grid">
+
+    <div class="app-card">
+      <img src="screenshots/netguard_dashboard.png" alt="NetGuard Pro Dashboard" class="app-screenshot">
+      <div class="app-info">
+        <div class="app-name">NetGuard Pro</div>
+        <div class="app-desc">Moteur principal : IDS Suricata, capture Scapy, DPI, geoblocage, detection d'anomalies, API REST, dashboard temps reel WebSocket.</div>
+        <div class="app-tags"><span class="app-badge badge-free">Gratuit</span><span class="app-badge badge-port">Port 8765</span></div>
+      </div>
+    </div>
+
+    <div class="app-card">
+      <img src="screenshots/netguard_analyze.png" alt="NetGuard Analyze" class="app-screenshot">
+      <div class="app-info">
+        <div class="app-name">NetGuard Analyze</div>
+        <div class="app-desc">Analyse approfondie : Deep Packet Inspection, fingerprinting JA3/TLS, detection d'exfiltration par entropie, correlation d'attaques.</div>
+        <div class="app-tags"><span class="app-badge badge-pro">Pro</span><span class="app-badge badge-port">DPI + JA3</span></div>
+      </div>
+    </div>
+
+    <div class="app-card">
+      <img src="screenshots/netguard_map.png" alt="NetGuard Map" class="app-screenshot">
+      <div class="app-info">
+        <div class="app-name">NetGuard Map</div>
+        <div class="app-desc">Carte mondiale interactive des menaces. Geolocalisation des attaquants, statistiques par pays, blocage geographique en un clic.</div>
+        <div class="app-tags"><span class="app-badge badge-free">Gratuit</span><span class="app-badge badge-port">D3.js + GeoIP</span></div>
+      </div>
+    </div>
+
+    <div class="app-card">
+      <img src="screenshots/netguard_history.png" alt="NetGuard History" class="app-screenshot">
+      <div class="app-info">
+        <div class="app-name">NetGuard History</div>
+        <div class="app-desc">Historique complet des evenements, alertes, menaces detectees. Filtrage avance, export, timeline des incidents.</div>
+        <div class="app-tags"><span class="app-badge badge-free">Gratuit (7j)</span><span class="app-badge badge-pro">Pro (30j)</span><span class="app-badge badge-ent">Enterprise (1an)</span></div>
+      </div>
+    </div>
+
+    <div class="app-card">
+      <img src="screenshots/netguard_network.png" alt="NetGuard Network" class="app-screenshot">
+      <div class="app-info">
+        <div class="app-name">NetGuard Network</div>
+        <div class="app-desc">Scan du reseau local, decouverte de peripheriques, fingerprinting OS, detection d'appareils inconnus ou suspects.</div>
+        <div class="app-tags"><span class="app-badge badge-free">Gratuit</span><span class="app-badge badge-port">LAN Scan</span></div>
+      </div>
+    </div>
+
+    <div class="app-card">
+      <img src="screenshots/netguard_panels.png" alt="NetGuard Panels" class="app-screenshot">
+      <div class="app-info">
+        <div class="app-name">NetGuard Panels</div>
+        <div class="app-desc">Vue multi-ecrans detachable. Ouvrez chaque panneau dans une fenetre separee pour un monitoring NOC professionnel.</div>
+        <div class="app-tags"><span class="app-badge badge-pro">Pro</span><span class="app-badge badge-port">Multi-ecrans</span></div>
+      </div>
+    </div>
+
+    <div class="app-card">
+      <img src="screenshots/netguard_service.png" alt="NetGuard Service" class="app-screenshot">
+      <div class="app-info">
+        <div class="app-name">NetGuard Service</div>
+        <div class="app-desc">Monitoring des 9 services de la suite. Demarrage/arret, sante, logs, alertes en cas de panne d'un module.</div>
+        <div class="app-tags"><span class="app-badge badge-pro">Pro</span><span class="app-badge badge-port">9 Services</span></div>
+      </div>
+    </div>
+
+    <div class="app-card">
+      <img src="screenshots/mailshield.png" alt="MailShield Pro" class="app-screenshot">
+      <div class="app-info">
+        <div class="app-name">MailShield Pro v2.0</div>
+        <div class="app-desc">Client email securise : anti-phishing, anti-spam intelligent, quarantaine, analyse des pieces jointes, vault de mots de passe.</div>
+        <div class="app-tags"><span class="app-badge badge-pro">Pro</span><span class="app-badge badge-port">Port 8800</span></div>
+      </div>
+    </div>
+
+    <div class="app-card">
+      <img src="screenshots/cleanguard.png" alt="CleanGuard" class="app-screenshot">
+      <div class="app-info">
+        <div class="app-name">CleanGuard</div>
+        <div class="app-desc">Antimalware complet : scan par signatures + heuristique, nettoyage systeme, quarantaine automatique, surveillance Watchdog.</div>
+        <div class="app-tags"><span class="app-badge badge-pro">Pro</span><span class="app-badge badge-port">Port 8810</span></div>
+      </div>
+    </div>
+
+    <div class="app-card">
+      <img src="screenshots/sentinel.png" alt="Sentinel OS" class="app-screenshot">
+      <div class="app-info">
+        <div class="app-name">Sentinel OS</div>
+        <div class="app-desc">SOAR complet : Cortex (moteur central), playbooks automatises, threat intelligence (OTX, AbuseIPDB), alertes Telegram/Discord.</div>
+        <div class="app-tags"><span class="app-badge badge-pro">Pro</span><span class="app-badge badge-port">Port 8900</span></div>
+      </div>
+    </div>
+
+    <div class="app-card">
+      <img src="screenshots/vpnguard.png" alt="VPNGuard" class="app-screenshot">
+      <div class="app-info">
+        <div class="app-name">VPNGuard + WireGuard</div>
+        <div class="app-desc">VPN integre : tunnel WireGuard, gestion multi-profils, generation de cles, monitoring du tunnel en temps reel.</div>
+        <div class="app-tags"><span class="app-badge badge-pro">Pro</span><span class="app-badge badge-port">Port 8820</span></div>
+      </div>
+    </div>
+
+    <div class="app-card">
+      <img src="screenshots/honeypot.png" alt="Honeypot" class="app-screenshot">
+      <div class="app-info">
+        <div class="app-name">Honeypot</div>
+        <div class="app-desc">5 faux services (SSH, FTP, RDP, HTTP, Telnet) qui piegent les attaquants. Fichiers trap, auto-block des IPs malveillantes.</div>
+        <div class="app-tags"><span class="app-badge badge-pro">Pro</span><span class="app-badge badge-port">Port 8830</span></div>
+      </div>
+    </div>
+
+    <div class="app-card">
+      <img src="screenshots/fim.png" alt="FIM" class="app-screenshot">
+      <div class="app-info">
+        <div class="app-name">FIM — File Integrity Monitor</div>
+        <div class="app-desc">Surveille les fichiers critiques (SHA-256). Alerte instantanee sur toute modification non autorisee. Baseline automatique.</div>
+        <div class="app-tags"><span class="app-badge badge-pro">Pro</span><span class="app-badge badge-port">Port 8840</span></div>
+      </div>
+    </div>
+
+    <div class="app-card">
+      <img src="screenshots/recorder.png" alt="Recorder" class="app-screenshot">
+      <div class="app-info">
+        <div class="app-name">Recorder — Forensique</div>
+        <div class="app-desc">Capture PCAP des sessions reseau. Rejeu et analyse post-incident. Stockage forensique configurable pour les audits.</div>
+        <div class="app-tags"><span class="app-badge badge-pro">Pro</span><span class="app-badge badge-port">Port 8860</span></div>
+      </div>
+    </div>
+
+    <div class="app-card">
+      <img src="screenshots/strikeback.png" alt="StrikeBack" class="app-screenshot">
+      <div class="app-info">
+        <div class="app-name">StrikeBack</div>
+        <div class="app-desc">Reponse active : blocage automatique, tarpit (ralentissement), decoys (leurres), contre-mesures automatisees, notifications.</div>
+        <div class="app-tags"><span class="app-badge badge-pro">Pro</span><span class="app-badge badge-port">Port 8850</span></div>
+      </div>
+    </div>
+
   </div>
 </section>
 
