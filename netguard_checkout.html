@@ -121,7 +121,7 @@ if (window.paypal) {
     },
     createSubscription: function(data, actions) {
       return actions.subscription.create({
-        plan_id: plan === 'enterprise' ? 'P-0KN26759CD032611WNHDJOBQ' : 'P-6UV65618EL221023CNHDJR6A'
+        plan_id: plan === 'enterprise' ? 'P-6UV65618EL221023CNHDJR6A' : 'P-0KN26759CD032611WNHDJOBQ'
       });
     },
     onApprove: function(data, actions) {
