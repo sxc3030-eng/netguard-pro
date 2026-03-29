@@ -5,7 +5,7 @@
 #define MyAppName "NetGuard Pro"
 #define MyAppVersion "3.0.0"
 #define MyAppPublisher "NetGuard Pro Inc."
-#define MyAppURL "https://netguardpro.com"
+#define MyAppURL "https://sxc3030-eng.github.io/netguard-pro"
 #define MyAppExeName "NetGuardPro.exe"
 
 [Setup]
