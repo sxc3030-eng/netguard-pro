@@ -1,0 +1,50 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import "highlight.js/styles/github-dark.css";
+
+:root {
+  color-scheme: dark;
+}
+
+html, body {
+  background: #0a0a0f;
+  color: #e6e6f0;
+  min-height: 100%;
+}
+
+body {
+  font-feature-settings: "ss01", "cv11";
+  -webkit-font-smoothing: antialiased;
+}
+
+.prose-lesson {
+  max-width: 72ch;
+}
+.prose-lesson h1 { @apply text-3xl font-semibold mt-8 mb-4 text-text; }
+.prose-lesson h2 { @apply text-2xl font-semibold mt-8 mb-3 text-text border-l-2 border-accent pl-3; }
+.prose-lesson h3 { @apply text-xl font-semibold mt-6 mb-2 text-text; }
+.prose-lesson p { @apply text-[15px] leading-7 my-3 text-text/90; }
+.prose-lesson ul { @apply list-disc pl-6 my-3 space-y-1; }
+.prose-lesson ol { @apply list-decimal pl-6 my-3 space-y-1; }
+.prose-lesson li { @apply text-[15px] leading-7 text-text/90; }
+.prose-lesson code:not(pre code) {
+  @apply bg-panel border border-border px-1.5 py-0.5 rounded text-[13px] text-accent2;
+}
+.prose-lesson pre {
+  @apply bg-[#0d1117] border border-border rounded-lg p-4 my-4 overflow-x-auto text-[13px];
+}
+.prose-lesson blockquote {
+  @apply border-l-2 border-accent2 pl-4 italic text-muted my-4;
+}
+.prose-lesson a { @apply text-accent2 underline underline-offset-2; }
+.prose-lesson strong { @apply text-text; }
+.prose-lesson hr { @apply my-8 border-border; }
+.prose-lesson table { @apply w-full my-4 border-collapse text-sm; }
+.prose-lesson th, .prose-lesson td { @apply border border-border px-3 py-2 text-left; }
+.prose-lesson th { @apply bg-panel; }
+
+.scrollbar::-webkit-scrollbar { width: 8px; height: 8px; }
+.scrollbar::-webkit-scrollbar-thumb { @apply bg-border rounded; }
+.scrollbar::-webkit-scrollbar-track { background: transparent; }
