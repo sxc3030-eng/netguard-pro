@@ -8,6 +8,7 @@ import { module6 } from "./lessons/module6-mcp";
 import { module7 } from "./lessons/module7-multi-agents";
 import { module8 } from "./lessons/module8-production";
 import { module9 } from "./lessons/module9-business";
+import { module10 } from "./lessons/module10-lab-rag-agents";
 
 export const curriculum: Module[] = [
   module1,
@@ -19,6 +20,7 @@ export const curriculum: Module[] = [
   module7,
   module8,
   module9,
+  module10,
 ];
 
 export function getModule(slug: string) {
