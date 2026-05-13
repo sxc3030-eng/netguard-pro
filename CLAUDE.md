@@ -40,6 +40,14 @@ Si l'utilisateur demande de créer un nouveau projet (ex: "fais-moi une formatio
 - Branche de travail historique : `claude/ai-builder-training-course-MY1Ub`
 - Dossier actuel : `ai-builder-academy/` (à migrer vers son propre repo)
 
+## Matériel utilisateur
+
+- **PC i5** : la machine qui reste **TOUJOURS ALLUMÉE**. C'est là que doivent tourner les services 24/7 (dev servers, self-host, etc.). OS Linux.
+- **PC i7** : machine de **test/développement ponctuel**. Souvent éteinte. OS Windows.
+- **Téléphone Android** : pour accéder aux services depuis le Wi-Fi domestique.
+
+**Conséquence pour les déploiements locaux** : installer/lancer sur le **i5** quand l'utilisateur veut un accès permanent. Le i7 ne sert qu'aux sessions de test ponctuelles.
+
 ## Style de communication
 
 - Réponses courtes et directes en français
