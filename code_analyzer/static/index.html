@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Code Analysis Viewer</title>
+  <link rel="stylesheet" href="css/style.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" />
+</head>
+<body>
+
+<!-- ── Top bar ─────────────────────────────────────────────────────────────── -->
+<header class="topbar">
+  <div class="topbar-left">
+    <span class="logo">⬡ CodeLens</span>
+    <div class="project-input-wrap">
+      <input id="rootInput" type="text" placeholder="Chemin du projet… ex: /home/user/my-project" />
+      <button id="loadBtn" class="btn btn-primary">Charger</button>
+    </div>
+  </div>
+  <div class="topbar-right">
+    <select id="providerSelect" class="select-sm">
+      <option value="claude">Claude (Anthropic)</option>
+      <option value="openai">GPT (OpenAI)</option>
+      <option value="ollama">Ollama (local)</option>
+    </select>
+    <select id="modelSelect" class="select-sm"></select>
+    <input id="apiKeyInput" type="password" placeholder="API Key" class="input-sm" />
+    <select id="modeSelect" class="select-sm">
+      <option value="review">Review</option>
+      <option value="fix">Fix</option>
+      <option value="explain">Expliquer</option>
+      <option value="security">Sécurité</option>
+    </select>
+    <button id="analyzeBtn" class="btn btn-accent" disabled>Analyser ↑</button>
+    <div id="statusDot" class="status-dot idle" title="Idle"></div>
+  </div>
+</header>
+
+<!-- ── Main layout ─────────────────────────────────────────────────────────── -->
+<main class="workspace">
+
+  <!-- File tree -->
+  <aside id="sidebar" class="sidebar">
+    <div class="panel-header">
+      <span>Fichiers</span>
+      <input id="filterInput" type="text" placeholder="Filtrer…" class="filter-input" />
+    </div>
+    <div id="fileTree" class="file-tree"></div>
+  </aside>
+
+  <!-- Resize handle sidebar ↔ code -->
+  <div class="resizer" id="resizerLeft"></div>
+
+  <!-- Code viewer (tabs) -->
+  <section class="code-section">
+    <div id="tabBar" class="tab-bar">
+      <span class="tab-placeholder">Sélectionnez un fichier →</span>
+    </div>
+    <div id="codeViewers" class="code-viewers">
+      <div class="empty-state">
+        <div class="empty-icon">⬡</div>
+        <p>Ouvrez un fichier pour voir son code</p>
+        <p class="hint">Chargez d'abord un projet via le chemin ci-dessus</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Resize handle code ↔ arch -->
+  <div class="resizer" id="resizerRight"></div>
+
+  <!-- Architecture / Analysis panel -->
+  <aside id="archPanel" class="arch-panel">
+    <div class="panel-header">
+      <span id="archTitle">Architecture</span>
+      <div class="arch-tabs">
+        <button class="arch-tab active" data-tab="graph">Graphe</button>
+        <button class="arch-tab" data-tab="analysis">Analyse IA</button>
+        <button class="arch-tab" data-tab="stats">Stats</button>
+      </div>
+    </div>
+
+    <!-- Graph tab -->
+    <div id="tab-graph" class="arch-content active">
+      <canvas id="graphCanvas"></canvas>
+      <div id="graphTooltip" class="graph-tooltip hidden"></div>
+    </div>
+
+    <!-- Analysis tab -->
+    <div id="tab-analysis" class="arch-content">
+      <div id="analysisOutput" class="analysis-output">
+        <div class="analysis-empty">
+          <p>Sélectionnez un fichier et cliquez <strong>Analyser ↑</strong></p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Stats tab -->
+    <div id="tab-stats" class="arch-content">
+      <div id="statsOutput" class="stats-output"></div>
+    </div>
+  </aside>
+
+</main>
+
+<!-- ── Scripts ────────────────────────────────────────────────────────────── -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="js/graph.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
