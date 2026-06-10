@@ -1,0 +1,14 @@
+# Medjat Plugins — Dependances
+# Tout est en bibliotheque standard Python 3.8+
+# Aucune installation requise sauf Python lui-meme
+
+# tkinter        — GUI (inclus avec Python sur Ubuntu: sudo apt install python3-tk)
+# sqlite3        — Base de donnees (inclus)
+# imaplib        — Lecture mail IMAP (inclus)
+# smtplib        — Envoi mail SMTP (inclus)
+# email          — Parsing mails (inclus)
+# threading      — Connexions async (inclus)
+# json           — Config (inclus)
+# re             — Regex detection RDV (inclus)
+# calendar       — Vue mensuelle (inclus)
+# subprocess     — Lancement plugins (inclus)
